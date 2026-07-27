@@ -249,7 +249,6 @@ const speeds = [
 
 function setSpeed(v: number) {
   speed.value = v
-  // 同步到后端
   if (selectedDroneId.value) {
     axios.post('/api/sim/speed', { droneId: selectedDroneId.value, speed: v }).catch(() => {})
   }
@@ -333,7 +332,6 @@ function applyWind(s: number) {
     speed: s,
     direction: windDirection.value,
   }).then(() => {
-    // 更新本地状态的 wind 显示
     const drone = droneList.value.find(d => d.id === selectedDroneId.value)
     if (drone) {
       drone.windSpeed = s
@@ -406,13 +404,9 @@ async function removeDrone(id: string) {
   const drone = droneList.value.find(d => d.id === id)
   if (!drone) return
 
-  // 如果在执行中，先通知后端停止
+  // 如果在执行中，通过 MQTT 通知后端停止
   if (drone.status === 'running' || drone.status === 'paused') {
-    try {
-      await axios.post('/api/sim/stop', { droneId: id })
-    } catch (e) {
-      // 尽量停止，忽略错误
-    }
+    sendFlightCommand(id, 'flight_task_terminate')
   }
 
   // 从后端引擎中彻底删除
@@ -671,13 +665,13 @@ async function returnHome() {
   sendFlightCommand(selectedDroneId.value, 'flight_task_return_home')
 }
 
-// 发送 DJI flight_task 指令到 thing/product/{sn}/services
-function sendFlightCommand(droneId: string, method: string) {
+// 发送 MQTT 指令到 thing/product/{sn}/services
+function sendFlightCommand(droneId: string, method: string, extra?: Record<string, any>) {
   const msg = {
     tid: crypto.randomUUID(),
     bid: crypto.randomUUID(),
     timestamp: Date.now(),
-    data: { method },
+    data: { method, ...extra },
   }
   publishMQTT(`thing/product/${droneId}/services`, msg)
 }

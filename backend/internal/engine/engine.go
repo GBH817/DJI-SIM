@@ -521,10 +521,6 @@ func (e *Engine) runSimulationLoop(ds *DroneState) {
 			}
 			ds.Elapsed = elapsed
 
-			// 累计飞行时间用于电池模拟（每个 tick = 100ms * 速度倍率 * 爬升权重）
-			vs := CurrentVerticalSpeed(ds.Segments, ds.Elapsed)
-			ds.CumFlightSec += 0.1 * ds.SpeedMultiplier * powerWeight(vs)
-
 			if elapsed >= totalFlightDuration {
 				// 飞行结束，检查最后一个航点是否有悬停
 				lastIdx := len(waypoints) - 1
@@ -571,6 +567,31 @@ func (e *Engine) runSimulationLoop(ds *DroneState) {
 			// 正常插值
 			pt := Interpolate(ds.SimWaypoints, ds.Segments, elapsed)
 
+			// 累计飞行时间（含风力耗电影响，所有风速生效）
+			vs := CurrentVerticalSpeed(ds.Segments, ds.Elapsed)
+			windPwr := 1.0
+			if ds.WindSpeed > 0 && pt.Speed > 0 {
+				// 空速向量 = 地速 − 风速，耗电正比于空速大小
+				headingRad := pt.Heading * math.Pi / 180.0
+				windToRad := (ds.WindDirection + 180) * math.Pi / 180.0 // 风去向
+				// 地速分量 [东, 北]
+				gx := pt.Speed * math.Sin(headingRad)
+				gy := pt.Speed * math.Cos(headingRad)
+				// 风速分量 [东, 北]
+				wx := ds.WindSpeed * math.Sin(windToRad)
+				wy := ds.WindSpeed * math.Cos(windToRad)
+				// 空速 = 地速 − 风速（向量）
+				airspeedMag := math.Sqrt((gx-wx)*(gx-wx) + (gy-wy)*(gy-wy))
+				windPwr = airspeedMag / pt.Speed
+				if windPwr < 0.5 {
+					windPwr = 0.5
+				}
+				if windPwr > 2.0 {
+					windPwr = 2.0
+				}
+			}
+			ds.CumFlightSec += 0.1 * ds.SpeedMultiplier * powerWeight(vs) * windPwr
+
 			// 风力偏移：超限时累积漂移（离地 > 5m 才生效，避免地面偏移）
 			takeoffAlt := ds.Trajectory.TakeOffPoint[2]
 			if pt.Altitude < takeoffAlt+5 {
@@ -587,8 +608,6 @@ func (e *Engine) runSimulationLoop(ds *DroneState) {
 					ds.CumDriftLat += windDrift.DriftLat
 					ds.CumDriftLng += windDrift.DriftLng
 					pt.Speed = windDrift.GroundSpeed
-					// 风力超限时耗电增加
-					ds.CumFlightSec += 0.1 * ds.SpeedMultiplier * powerWeight(vs) * (windDrift.PowerFactor - 1.0)
 				} else {
 					ds.WindWarning = false
 					// 无风或风力在抗风范围内：逐步回收累计漂移，线性回归原航线

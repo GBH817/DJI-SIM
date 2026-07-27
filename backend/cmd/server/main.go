@@ -137,67 +137,17 @@ func main() {
 		})
 	})
 
-	// 仿真控制 API
-	r.POST("/api/sim/start", func(c *gin.Context) {
-		var req struct {
-			DroneID string `json:"droneId"`
-		}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 droneId"})
-			return
-		}
-		if err := simEngine.Start(req.DroneID); err != nil {
+	r.DELETE("/api/sim/drone/:id", func(c *gin.Context) {
+		droneID := c.Param("id")
+		if err := simEngine.RemoveDrone(droneID); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+		delete(uploadedTrajectories, droneID)
 		c.JSON(http.StatusOK, gin.H{"success": true})
 	})
 
-	r.POST("/api/sim/pause", func(c *gin.Context) {
-		var req struct {
-			DroneID string `json:"droneId"`
-		}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 droneId"})
-			return
-		}
-		if err := simEngine.Pause(req.DroneID); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"success": true})
-	})
-
-	r.POST("/api/sim/resume", func(c *gin.Context) {
-		var req struct {
-			DroneID string `json:"droneId"`
-		}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 droneId"})
-			return
-		}
-		if err := simEngine.Resume(req.DroneID); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"success": true})
-	})
-
-	r.POST("/api/sim/stop", func(c *gin.Context) {
-		var req struct {
-			DroneID string `json:"droneId"`
-		}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 droneId"})
-			return
-		}
-		if err := simEngine.Stop(req.DroneID); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"success": true})
-	})
-
+	// 仿真参数控制（HTTP + MQTT 双通道）
 	r.POST("/api/sim/speed", func(c *gin.Context) {
 		var req struct {
 			DroneID string  `json:"droneId"`
@@ -214,12 +164,11 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"success": true})
 	})
 
-	// 风力模拟控制 API
 	r.POST("/api/sim/wind", func(c *gin.Context) {
 		var req struct {
 			DroneID   string  `json:"droneId"`
-			Speed     float64 `json:"speed"`     // 风速 (m/s)
-			Direction float64 `json:"direction"` // 风向 (度, 0=北, 气象方向)
+			Speed     float64 `json:"speed"`
+			Direction float64 `json:"direction"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少参数"})
@@ -229,16 +178,6 @@ func main() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"success": true})
-	})
-
-	r.DELETE("/api/sim/drone/:id", func(c *gin.Context) {
-		droneID := c.Param("id")
-		if err := simEngine.RemoveDrone(droneID); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		delete(uploadedTrajectories, droneID)
 		c.JSON(http.StatusOK, gin.H{"success": true})
 	})
 
@@ -273,22 +212,24 @@ var _ = parser.DefaultRegistry()
 
 // djiServiceCommand DJI thing/product/{sn}/services 指令格式
 type djiServiceCommand struct {
-	TID       string          `json:"tid"`
-	BID       string          `json:"bid"`
-	Timestamp int64           `json:"timestamp"`
-	Data      djiServiceData  `json:"data"`
+	TID       string         `json:"tid"`
+	BID       string         `json:"bid"`
+	Timestamp int64          `json:"timestamp"`
+	Data      djiServiceData `json:"data"`
 }
 
 type djiServiceData struct {
-	Method string `json:"method"`
+	Method    string  `json:"method"`
+	Speed     float64 `json:"speed"`     // sim_set_speed 用
+	Direction float64 `json:"direction"` // sim_set_wind 用
 }
 
 // djiServiceReply 指令回复
 type djiServiceReply struct {
-	TID       string         `json:"tid"`
-	BID       string         `json:"bid"`
-	Timestamp int64          `json:"timestamp"`
-	Data      djiReplyData   `json:"data"`
+	TID       string       `json:"tid"`
+	BID       string       `json:"bid"`
+	Timestamp int64        `json:"timestamp"`
+	Data      djiReplyData `json:"data"`
 }
 
 type djiReplyData struct {
@@ -331,6 +272,10 @@ func setupServiceSubscriber() {
 			execErr = simEngine.Stop(droneID)
 		case "flight_task_return_home":
 			execErr = simEngine.ReturnHome(droneID)
+		case "sim_set_speed":
+			execErr = simEngine.SetSpeed(droneID, cmd.Data.Speed)
+		case "sim_set_wind":
+			execErr = simEngine.SetWind(droneID, cmd.Data.Speed, cmd.Data.Direction)
 		default:
 			log.Println("[Services] 未知方法:", cmd.Data.Method)
 			return
