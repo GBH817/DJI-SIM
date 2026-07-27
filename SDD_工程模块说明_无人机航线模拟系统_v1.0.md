@@ -1,7 +1,7 @@
-# 系统设计文档（SDD）— 工程模块说明 v1.1
+# 系统设计文档（SDD）— 工程模块说明 v1.2
 
 > **文档状态:** 已定稿
-> **版本:** v1.1
+> **版本:** v1.2
 > **作者:** drone-sim 项目组
 > **所属模块:** 全栈（前端 + 后端服务 + MQTT 通信）
 > **更新日期:** 2026-07-27
@@ -11,7 +11,7 @@
 
 ## 1. 模块概述
 
-本系统是一个**低空飞行数据生成器**，支持上传大疆 KMZ 航线文件后进行时间驱动的仿真飞行，通过 MQTT 以 DJI Remote ID 兼容格式实时发布遥测数据，前端基于 CesiumJS 三维地球可视化展示。系统支持多机仿真、风力模拟、风速对电量影响、仿真生命周期控制。
+本系统是一个**低空飞行数据生成器**，支持上传大疆 KMZ 航线文件后进行时间驱动的仿真飞行，通过 MQTT 以 DJI Remote ID 兼容格式实时发布遥测数据，前端基于 CesiumJS 三维地球可视化展示。系统支持多机仿真、风力模拟、风速对电量影响、DRC 紧急操作（紧急停机/紧急降落）、仿真生命周期控制。
 
 ### 1.1 模块定位与边界
 
@@ -80,8 +80,8 @@ drone-sim/
 | 组件 | 文件 | 核心职责 |
 |:---|:---|:---|
 | **KMZParser** | `backend/internal/parser/kmz.go` | 解压 KMZ → 解析 KML/WPML → 生成 Trajectory |
-| **Engine** | `backend/internal/engine/engine.go` | 仿真核心：100ms ticker、多机管理、风力模拟、电量计算、同步停止、原始航线备份恢复 |
-| **Interpolator** | `backend/internal/engine/interpolator.go` | Haversine 距离、航段插值、贝塞尔弧线、风力漂移 `ComputeWindDrift` |
+| **Engine** | `backend/internal/engine/engine.go` | 仿真核心：100ms ticker、多机管理、风力模拟、电量计算、同步停止、原始航线备份恢复、DRC 紧急停机/降落 |
+| **Interpolator** | `backend/internal/engine/interpolator.go` | Haversine 距离、航段插值、贝塞尔弧线、风力漂移 `ComputeWindDrift`、垂直速度 `CurrentVerticalSpeed` |
 | **Publisher** | `backend/internal/mqtt/publisher.go` | 双写遥测（内嵌+外部 Broker），DJI 兼容格式 |
 | **App.vue** | `frontend/src/App.vue` | 主界面：KMZ 上传、航线列表、无人机详情、仿真控制面板、风力罗盘、状态恢复 |
 | **useTrajectory** | `frontend/src/composables/useTrajectory.ts` | Cesium Entity 全生命周期、路径重置 `resetPath`、起飞点获取 |
@@ -96,14 +96,28 @@ drone-sim/
 用户选择 KMZ → POST /api/upload (multipart/form-data)
   → KMZParser 解压解析 → Engine.AddDrone() 注册
   → 返回 Trajectory JSON → 前端 addTrajectory() 绘制预览
-  → 前端 MQTT 订阅 thing/product/{id}/osd
+  → 前端 MQTT 订阅 thing/product/{id}/osd    （遥测）
+  → 前端 MQTT 订阅 thing/product/{id}/state  （状态）
 用户点击开始 → MQTT flight_task_execute
   → Engine.Start() 启动 goroutine
   → 每 100ms tick: 插值 → 风力计算 → 遥测发布
-  → 前端 handleOSDMessage 更新位置/状态
+  → OSD topic: 前端 handleOSDMessage 更新位置/速度/高度
+  → State topic: 前端 handleStateMessage 更新飞行状态
 ```
 
-### 4.2 仿真控制（当前实际实现）
+### 4.2 紧急操作（DRC）
+
+```
+用户点击紧急停机/降落 → MQTT thing/product/{id}/drc/down
+  → Engine.EmergencyStop() / EmergencyLanding()
+  → 停止当前仿真 → 启动 emergencyDescend 循环
+  → 自由落体 h = h₀ − ½gt² / 可控下降 h = h₀ − 3t
+  → 每 100ms: OSD 发布位置/高度/垂直速度
+  → State topic: mode_code=7(停机)/2(降落)
+  → 着陆后: mode_code=0, flight_status=emergency_stopped/emergency_landed
+```
+
+### 4.3 仿真控制（当前实际实现）
 
 飞行控制（开始/暂停/继续/停止/返航）统一走 **MQTT** `thing/product/{droneId}/services`：
 
@@ -117,7 +131,7 @@ drone-sim/
 | `sim_set_speed` | 设置仿真倍速 | 自定义（HTTP+MQTT 双通道） |
 | `sim_set_wind` | 设置风力 | 自定义（HTTP+MQTT 双通道） |
 
-### 4.3 风力模拟流程
+### 4.4 风力模拟流程
 
 ```
 每 tick:
@@ -134,7 +148,7 @@ drone-sim/
     以当前航线速度逐步回收漂移，线性回归原航线
 ```
 
-### 4.4 遥测数据过滤
+### 4.5 遥测数据过滤
 
 后端每轮仿真递增 `RunGeneration`，遥测携带此值。前端 `handleOSDMessage` 比较 `run_generation`，丢弃旧轮次数据，防止停止后旧遥测导致位置跳变。
 
@@ -155,6 +169,7 @@ drone-sim/
 | MQTT | `thing/product/{id}/osd` | 实时遥测（10Hz，DJI 兼容） |
 | MQTT | `thing/product/{id}/state` | 设备状态 |
 | MQTT | `thing/product/{id}/services` | 飞行控制指令 |
+| MQTT | `thing/product/{id}/drc/down` | DRC 远程控制（紧急停机/降落） |
 
 > 注：`/api/sim/start|pause|resume|stop` 已移除，统一改用 MQTT。
 
@@ -186,10 +201,13 @@ cd frontend && npm run dev
 - **遥测频率**：10Hz（100ms/帧）
 - **同步停止**：`Stop()` 先停 ticker 再设 idle，确保调用返回后状态确定
 - **原始航线保护**：`AddDrone` 保存 `OriginalSimWaypoints`，`Start` 恢复，防止返航后航线被替换
+- **垂直速度**：航段构建时根据高度差预计算，插值时 `CurrentVerticalSpeed` 实时查表。正值=爬升，负值=下降
 - **风力耗电**：向量物理模型，逆风/侧风/顺风全覆盖
 - **漂移回收**：关闭风力后按航线速度线性回归，非瞬间跳回
 - **离地保护**：高度 < 起飞点+5m 时风力漂移不生效
 - **runGeneration**：区分新旧轮次遥测，防止停止后旧数据干扰
+- **紧急降落物理**：紧急停机为自由落体 `h = h₀ − ½gt²`，垂直速度 = −gt；紧急降落为可控下降 3m/s。风力持续水平漂移，电量持续消耗，着陆后状态变更为 `emergency_stopped` / `emergency_landed`
+- **状态上报规范**：飞行状态通过 state topic 的 `mode_code`（大疆标准）和 `flight_status`（仿真扩展）上报；OSD topic 仅含遥测数据不含状态
 
 ---
 
@@ -211,6 +229,6 @@ cd frontend && npm run dev
 ```
 电量% = 100 × (1 − effectiveTime / maxFlightTime)
 effectiveTime = 飞行秒数 × windPwr × 爬升权重 + 悬停秒数 × (maxFlight/maxHover)
-windPwr = |空速| / |地速|（0.5~2.0 区间）
-爬升权重 = 1.0 + verticalSpeed × 0.08（爬升时），0.75（下降时），1.0（平飞时）
+windPwr = |空速| / |地速|（0.5~2.0 区间），基于空速=地速−风速（向量）
+爬升权重 = 1.0 + |verticalSpeed| × 0.08（爬升时），0.75（下降时），1.0（平飞时）
 ```

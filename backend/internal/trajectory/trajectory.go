@@ -182,7 +182,8 @@ type RemoteIDTelemetry struct {
 	Longitude          float64           `json:"lng"`
 	Altitude           float64           `json:"alt"`               // 椭球高度
 	HeightAboveTakeoff float64           `json:"heightAboveTakeoff"` // 相对起飞点高度
-	Speed              float64           `json:"speed"`             // m/s 对地速度
+	Speed              float64           `json:"speed"`             // m/s 水平对地速度
+	VerticalSpeed      float64           `json:"verticalSpeed"`     // m/s 垂直速度（正=爬升，负=下降）
 	Heading            float64           `json:"heading"`           // 度，0-360
 	Status             string            `json:"status"`            // "idle"|"running"|"paused"|"completed"|"hovering"
 	Timestamp          int64             `json:"timestamp"`         // unix timestamp ms

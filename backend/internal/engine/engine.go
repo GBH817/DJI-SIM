@@ -49,6 +49,11 @@ type DroneState struct {
 	// 仿真轮次
 	RunGeneration int64 // 每次 Start / ReturnHome 递增，前端用于区分新旧遥测
 
+	// 紧急降落
+	emergencyFallStartAlt  float64   // 紧急降落起始高度
+	emergencyFallStartTime time.Time // 紧急降落起始时间
+	emergencyDescendRate   float64   // 下降速率 m/s，0 表示自由落体
+
 	Ticker   *time.Ticker
 	StopCh   chan struct{}
 	PauseCh  chan struct{}
@@ -783,6 +788,7 @@ func (e *Engine) buildTelemetry(ds *DroneState, pt InterpolatedPoint) trajectory
 		Altitude:           pt.Altitude,
 		HeightAboveTakeoff: heightAboveTakeoff,
 		Speed:              pt.Speed,
+		VerticalSpeed:      CurrentVerticalSpeed(ds.Segments, ds.Elapsed),
 		Heading:            pt.Heading,
 		Timestamp:          time.Now().UnixMilli(),
 		WaypointIndex:      pt.WaypointIndex,
@@ -1089,6 +1095,215 @@ func (e *Engine) ReturnHome(droneID string) error {
 	return nil
 }
 
+// EmergencyStop 紧急停机（DRC），电机立刻断电，自由落体
+func (e *Engine) EmergencyStop(droneID string) error {
+	return e.emergencyDescend(droneID, 0) // descendRate=0 表示自由落体
+}
+
+// EmergencyLanding 紧急降落（DRC），可控下降 3m/s
+func (e *Engine) EmergencyLanding(droneID string) error {
+	return e.emergencyDescend(droneID, 3.0)
+}
+
+func (e *Engine) emergencyDescend(droneID string, descendRate float64) error {
+	e.mu.RLock()
+	ds, ok := e.drones[droneID]
+	e.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("drone %s not found", droneID)
+	}
+
+	ds.mu.Lock()
+
+	// 如果已在紧急降落中，忽略
+	if ds.Status == "emergency_stop" || ds.Status == "emergency_landing" {
+		ds.mu.Unlock()
+		return nil
+	}
+
+	// 获取当前位置（优先用遥测中的位置，叠加了漂移）
+	var lat, lng, alt, heading, speed float64
+	if ds.Status == "hovering" && ds.HoverWaypointIdx >= 0 && ds.HoverWaypointIdx < len(ds.SimWaypoints) {
+		wp := ds.SimWaypoints[ds.HoverWaypointIdx]
+		lat = wp.Latitude + ds.CumDriftLat
+		lng = wp.Longitude + ds.CumDriftLng
+		alt = wp.EllipsoidHeight
+		heading = wp.Heading
+	} else if ds.Status == "running" {
+		pt := Interpolate(ds.SimWaypoints, ds.Segments, ds.Elapsed)
+		lat = pt.Latitude + ds.CumDriftLat
+		lng = pt.Longitude + ds.CumDriftLng
+		alt = pt.Altitude
+		heading = pt.Heading
+		speed = pt.Speed
+	} else {
+		// idle/paused/completed，使用 SimWaypoints[0]
+		if len(ds.SimWaypoints) > 0 {
+			wp := ds.SimWaypoints[0]
+			lat = wp.Latitude + ds.CumDriftLat
+			lng = wp.Longitude + ds.CumDriftLng
+			alt = wp.EllipsoidHeight
+		}
+	}
+
+	// 如果高度已经在地面，不执行
+	takeoffAlt := ds.Trajectory.TakeOffPoint[2]
+	if alt <= takeoffAlt {
+		ds.mu.Unlock()
+		return nil
+	}
+
+	// 停止当前仿真
+	if ds.Ticker != nil {
+		ds.Ticker.Stop()
+	}
+
+	if descendRate <= 0 {
+		ds.Status = "emergency_stop"
+	} else {
+		ds.Status = "emergency_landing"
+	}
+	ds.emergencyFallStartAlt = alt
+	ds.emergencyFallStartTime = time.Now()
+	ds.emergencyDescendRate = descendRate
+	ds.RunGeneration++
+
+	ds.Ticker = time.NewTicker(100 * time.Millisecond)
+	ds.StopCh = make(chan struct{})
+	ds.PauseCh = make(chan struct{})
+	ds.ResumeCh = make(chan struct{})
+
+	droneID2 := ds.DroneID
+	ds.mu.Unlock()
+
+	if e.onModeChange != nil {
+		e.onModeChange(droneID2, ds.Status)
+	}
+
+	// 启动紧急降落循环（共享 wind/speed/heading 以快照传入）
+	go e.runEmergencyDescend(ds, lat, lng, alt, heading, speed)
+	return nil
+}
+
+// runEmergencyDescend 紧急降落/坠落仿真循环
+func (e *Engine) runEmergencyDescend(ds *DroneState, lat, lng, alt, heading, _ float64) {
+	ticker := ds.Ticker
+	stopCh := ds.StopCh
+	descendRate := ds.emergencyDescendRate
+	startAlt := alt
+	startTime := time.Now()
+	groundAlt := ds.Trajectory.TakeOffPoint[2]
+
+	for {
+		select {
+		case <-ticker.C:
+			ds.mu.Lock()
+
+			elapsed := time.Since(startTime).Seconds()
+			var currentAlt float64
+			if descendRate <= 0 {
+				// 自由落体：h = h0 - 0.5*g*t²
+				currentAlt = startAlt - 0.5*9.8*elapsed*elapsed
+			} else {
+				// 可控降落：h = h0 - rate*t
+				currentAlt = startAlt - descendRate*elapsed
+			}
+
+			if currentAlt <= groundAlt {
+				currentAlt = groundAlt
+			}
+
+			// 风力水平漂移
+			windApplied := false
+			if ds.WindSpeed > 0 {
+				windToRad := (ds.WindDirection + 180) * math.Pi / 180.0
+				dt := 0.1 * ds.SpeedMultiplier
+				const metersPerDegLat = 111320.0
+				latRad := lat * math.Pi / 180.0
+				metersPerDegLng := metersPerDegLat * math.Cos(latRad)
+				driftEast := ds.WindSpeed * math.Sin(windToRad) * dt
+				driftNorth := ds.WindSpeed * math.Cos(windToRad) * dt
+				lat += driftNorth / metersPerDegLat
+				lng += driftEast / metersPerDegLng
+				windApplied = true
+			}
+
+			// 构建遥测
+			heightAboveTakeoff := currentAlt - groundAlt
+			if heightAboveTakeoff < 0 {
+				heightAboveTakeoff = 0
+			}
+
+			// 垂直速度：自由落体为 -g*t，可控降落为 -descendRate
+			var vertSpeed float64
+			if descendRate <= 0 {
+				vertSpeed = -9.8 * elapsed
+			} else {
+				vertSpeed = -descendRate
+			}
+
+			tel := trajectory.RemoteIDTelemetry{
+				DroneID:            ds.DroneID,
+				Latitude:           lat,
+				Longitude:          lng,
+				Altitude:           currentAlt,
+				HeightAboveTakeoff: heightAboveTakeoff,
+				Speed:              0,
+				VerticalSpeed:      vertSpeed,
+				Heading:            heading,
+				Timestamp:          time.Now().UnixMilli(),
+				Status:             ds.Status,
+				BatteryPercent:     ds.calcBatteryPercent(),
+				WindSpeed:          ds.WindSpeed,
+				WindDirection:      ds.WindDirection,
+				WindWarning:        windApplied && ds.WindSpeed > ds.ModelSpec.MaxWindResistance,
+				RunGeneration:      ds.RunGeneration,
+			}
+
+			// 更新电池
+			ds.CumHoverSec += 0.1 * ds.SpeedMultiplier
+
+			if currentAlt <= groundAlt {
+				// 着陆
+				if descendRate <= 0 {
+					ds.Status = "emergency_stopped"
+				} else {
+					ds.Status = "emergency_landed"
+				}
+				tel.Status = ds.Status
+				tel.Latitude = lat
+				tel.Longitude = lng
+				tel.Altitude = groundAlt
+				tel.HeightAboveTakeoff = 0
+				tel.Speed = 0
+				tel.VerticalSpeed = 0
+
+				ticker.Stop()
+				droneID2 := ds.DroneID
+				ds.mu.Unlock()
+
+				if e.onTelemetry != nil {
+					e.onTelemetry(tel)
+				}
+				if e.onModeChange != nil {
+					e.onModeChange(droneID2, ds.Status)
+				}
+				return
+			}
+
+			ds.mu.Unlock()
+
+			if e.onTelemetry != nil {
+				e.onTelemetry(tel)
+			}
+
+		case <-stopCh:
+			// 外部停止信号（不处理，紧急降落不能被暂停/停止打断）
+			// 继续执行直到着陆
+		}
+	}
+}
+
 // Stop 停止仿真（同步完成状态清理后才返回）
 func (e *Engine) Stop(droneID string) error {
 	e.mu.RLock()
@@ -1142,6 +1357,7 @@ type DroneStatusInfo struct {
 	Altitude           float64 `json:"alt"`
 	HeightAboveTakeoff float64 `json:"heightAboveTakeoff"`
 	Speed              float64 `json:"speed"`
+	VerticalSpeed      float64 `json:"verticalSpeed"`
 	Heading            float64 `json:"heading"`
 	WaypointIndex      int     `json:"waypointIndex"`
 	TotalWaypoints     int     `json:"totalWaypoints"`
@@ -1264,6 +1480,7 @@ func (e *Engine) GetStatus() map[string]DroneStatusInfo {
 		info.Longitude = pt.Longitude + ds.CumDriftLng
 		info.Altitude = pt.Altitude
 		info.Speed = pt.Speed
+		info.VerticalSpeed = CurrentVerticalSpeed(ds.Segments, ds.Elapsed)
 		info.Heading = pt.Heading
 		info.WaypointIndex = pt.WaypointIndex
 		info.TotalWaypoints = len(ds.SimWaypoints)

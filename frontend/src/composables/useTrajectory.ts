@@ -14,8 +14,6 @@ import {
   HorizontalOrigin,
   VerticalOrigin,
   Math as CesiumMath,
-  Transforms,
-  HeadingPitchRoll,
 } from 'cesium'
 
 export interface Waypoint {
@@ -282,18 +280,12 @@ function createDroneEntity(traj: TrajectoryData): Entity {
       ? (entry.droneEntity.position as PositionProperty).setValue(newPosition)
       : (entry.droneEntity.position = newPosition)
 
-    // 更新朝向（仅当 heading 合法时）
+    // 旋转 billboard 箭头指向飞行方向（补偿摄像机朝向）
     if (heading >= 0) {
-      const hpr = new HeadingPitchRoll(
-        CesiumMath.toRadians(heading - 90),
-        0,
-        0
-      )
-      entry.droneEntity.orientation = Transforms.headingPitchRollQuaternion(newPosition, hpr)
-      // 旋转 billboard 箭头指向飞行方向
       const b = entry.droneEntity.billboard
       if (b) {
-        b.rotation = CesiumMath.toRadians(-heading)
+        const camHeading = CesiumMath.toDegrees(viewer.value!.camera.heading)
+        b.rotation = CesiumMath.toRadians(camHeading - heading)
       }
     }
 

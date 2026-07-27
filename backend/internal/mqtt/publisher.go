@@ -89,7 +89,6 @@ type DJIOSDData struct {
 	WindSpeed          float64          `json:"wind_speed"`       // 模拟值
 	Battery            DJIBattery       `json:"battery"`
 	PositionState      DJIPositionState `json:"position_state"`
-	FlightStatus       string           `json:"flight_status"`        // mapped from engine status
 	WaypointIndex      int              `json:"waypoint_index"`       // 当前航点
 	TotalWaypoints     int              `json:"total_waypoints"`      // 总航点
 	Progress           float64          `json:"progress"`             // 0-100 进度百分比
@@ -137,7 +136,7 @@ func toDJI(tel trajectory.RemoteIDTelemetry) DJITelemetry {
 			AttitudeRoll:    0,
 			AttitudeYaw:     tel.Heading,
 			HorizontalSpeed: tel.Speed,
-			VerticalSpeed:   0,
+			VerticalSpeed:   tel.VerticalSpeed,
 			Height:          tel.HeightAboveTakeoff,
 			HomeDistance:    0,
 			WindSpeed:       tel.WindSpeed,
@@ -150,7 +149,6 @@ func toDJI(tel trajectory.RemoteIDTelemetry) DJITelemetry {
 				IsFixed: 1,
 				Quality: 5,
 			},
-			FlightStatus:       tel.Status,
 			WaypointIndex:      tel.WaypointIndex,
 			TotalWaypoints:     tel.TotalWaypoints,
 			Progress:           tel.Progress,
@@ -242,7 +240,8 @@ type DJIStateData struct {
 	ActivationTime    int64        `json:"activation_time"`    // 激活时间
 	WpmzVersion       string       `json:"wpmz_version"`       // 航线库版本
 	Storage           DJIStorage   `json:"storage"`            // 存储空间
-	ModeCode          int          `json:"mode_code"`          // 飞行模式码
+	ModeCode          int          `json:"mode_code"`          // 飞行模式码（大疆标准）
+	FlightStatus      string       `json:"flight_status"`      // 飞行状态详情（仿真扩展字段）
 	Battery           DJIBattery   `json:"battery"`            // 电池信息
 	Payloads          []DJIPayload `json:"payloads"`           // 负载列表
 	Cameras           []DJICamera  `json:"cameras"`            // 相机列表
@@ -325,6 +324,9 @@ func buildState(droneID string) DJIStateData {
 }
 
 // modeCodeFromStatus 将内部状态映射为 DJI mode_code
+// DJI Cloud API mode_code 定义:
+//
+//	0=Standby, 5=Wayline, 2=AutoLanding, 7=Failsafe/Emergency
 func modeCodeFromStatus(status string) int {
 	switch status {
 	case "idle":
@@ -337,6 +339,14 @@ func modeCodeFromStatus(status string) int {
 		return 0 // Standby
 	case "hovering":
 		return 5 // Wayline flight (悬停属于执行航线的一部分)
+	case "emergency_stop":
+		return 7 // Failsafe / Emergency motor stop
+	case "emergency_landing":
+		return 2 // Auto Landing (可控迫降)
+	case "emergency_stopped":
+		return 0 // Standby (已坠毁于地面)
+	case "emergency_landed":
+		return 0 // Standby (已迫降于地面)
 	default:
 		return 0
 	}
@@ -361,7 +371,7 @@ func (p *Publisher) PublishDeviceOnline(droneID string) {
 	p.publish(fmt.Sprintf("thing/product/%s/state", droneID), msg)
 }
 
-// PublishModeChange 飞行模式变更时发布 state + OSD 状态同步
+// PublishModeChange 飞行模式变更时发布 state topic（大疆规范：通过 mode_code 上报）
 func (p *Publisher) PublishModeChange(droneID, status string) {
 	p.mu.RLock()
 	if !p.connected {
@@ -372,6 +382,7 @@ func (p *Publisher) PublishModeChange(droneID, status string) {
 
 	state := buildState(droneID)
 	state.ModeCode = modeCodeFromStatus(status)
+	state.FlightStatus = status // 仿真扩展：详细状态字符串
 
 	msg := DJIStateMessage{
 		TID:       uuid.New().String(),
@@ -381,18 +392,6 @@ func (p *Publisher) PublishModeChange(droneID, status string) {
 		Data:      state,
 	}
 	p.publish(fmt.Sprintf("thing/product/%s/state", droneID), msg)
-
-	// 同时推送 OSD 状态更新，确保前端暂停/停止时能收到状态变化
-	osdUpdate := DJITelemetry{
-		TID:       uuid.New().String(),
-		BID:       uuid.New().String(),
-		Timestamp: currentTimeMillis(),
-		Gateway:   droneID,
-		Data: DJIOSDData{
-			FlightStatus: status,
-		},
-	}
-	p.publish(fmt.Sprintf("thing/product/%s/osd", droneID), osdUpdate)
 }
 
 func currentTimeMillis() int64 {

@@ -123,8 +123,10 @@
               <span class="value">{{ selectedDrone.heightAboveTakeoff?.toFixed(1) ?? '--' }} m</span>
             </div>
             <div class="status-row">
-              <span class="label">飞行速度</span>
+              <span class="label">水平速度</span>
               <span class="value">{{ selectedDrone.speed?.toFixed(1) ?? '--' }} m/s</span>
+              <span class="label">垂直速度</span>
+              <span class="value">{{ (selectedDrone.verticalSpeed ?? 0)?.toFixed(1) }} m/s</span>
             </div>
             <div class="status-row">
               <span class="label">航向角</span>
@@ -164,6 +166,15 @@
               :disabled="!selectedDroneId || selectedDrone?.status === 'idle'">⏹ 停止</button>
             <button class="ctrl-btn rth" @click="returnHome"
               :disabled="!selectedDroneId || (selectedDrone?.status !== 'running' && selectedDrone?.status !== 'hovering')">🏠 返航</button>
+          </div>
+          <div class="drc-control">
+            <label>紧急操作</label>
+            <div class="drc-buttons">
+              <button class="ctrl-btn drc-land" @click="emergencyLanding"
+                :disabled="!selectedDroneId || (selectedDrone?.status !== 'running' && selectedDrone?.status !== 'hovering')">🪂 紧急降落</button>
+              <button class="ctrl-btn drc-stop" @click="emergencyStop"
+                :disabled="!selectedDroneId || (selectedDrone?.status !== 'running' && selectedDrone?.status !== 'hovering')">⚠ 紧急停机</button>
+            </div>
           </div>
           <div class="speed-control">
             <label>仿真速度</label>
@@ -350,6 +361,7 @@ interface DroneInfo {
   alt: number
   heightAboveTakeoff: number
   speed: number
+  verticalSpeed: number
   heading: number
   status: string
   waypointIndex: number
@@ -386,6 +398,10 @@ function statusText(status: string): string {
     'paused': '已暂停',
     'completed': '已完成',
     'hovering': '悬停中',
+    'emergency_stop': '紧急停机中',
+    'emergency_landing': '紧急降落中',
+    'emergency_stopped': '已坠毁',
+    'emergency_landed': '已迫降',
   }
   return map[status] || status
 }
@@ -452,6 +468,7 @@ async function handleFileUpload(e: Event) {
           alt: tp.waypoints[0]?.ellipsoidHeight || 0,
           heightAboveTakeoff: 0,
           speed: 0,
+          verticalSpeed: 0,
           heading: 0,
           status: 'idle',
           waypointIndex: 0,
@@ -511,6 +528,7 @@ async function startSimulation() {
     drone.alt = takeoff[2]
     drone.heightAboveTakeoff = 0
     drone.speed = 0
+    drone.verticalSpeed = 0
     drone.heading = 0
     drone.progress = 0
     drone.waypointIndex = 0
@@ -641,6 +659,7 @@ async function stopSimulation() {
     drone.alt = takeoff[2]
     drone.heightAboveTakeoff = 0
     drone.speed = 0
+    drone.verticalSpeed = 0
     drone.heading = 0
     drone.progress = 0
     drone.waypointIndex = 0
@@ -674,6 +693,27 @@ function sendFlightCommand(droneId: string, method: string, extra?: Record<strin
     data: { method, ...extra },
   }
   publishMQTT(`thing/product/${droneId}/services`, msg)
+}
+
+let drcSeq = 0
+function sendDRCCommand(droneId: string, method: string) {
+  drcSeq++
+  const msg = {
+    method,
+    seq: drcSeq,
+    data: {},
+  }
+  publishMQTT(`thing/product/${droneId}/drc/down`, msg)
+}
+
+function emergencyStop() {
+  if (!selectedDroneId.value) return
+  sendDRCCommand(selectedDroneId.value, 'drone_emergency_stop')
+}
+
+function emergencyLanding() {
+  if (!selectedDroneId.value) return
+  sendDRCCommand(selectedDroneId.value, 'drc_emergency_landing')
 }
 
 // 从后端恢复已注册的无人机（页面刷新后恢复状态）
@@ -739,6 +779,7 @@ async function restoreDrones() {
           drone.lng = status.lng
           drone.alt = status.alt
           drone.speed = status.speed
+          drone.verticalSpeed = status.verticalSpeed || 0
           drone.heading = status.heading
           drone.heightAboveTakeoff = status.heightAboveTakeoff || 0
           drone.currentAction = status.currentAction || ''
@@ -797,8 +838,9 @@ function handleOSDMessage(droneId: string, payload: any) {
   }
 
   // 仅在活跃飞行状态下更新位置和动态数据
-  const flightStatus = osd.flight_status
-  const isActive = flightStatus === 'running' || flightStatus === 'hovering' || flightStatus === 'paused'
+  // 状态来源于 state topic 的 mode_code / flight_status，OSD 不再携带 flight_status
+  const isActive = drone.status === 'running' || drone.status === 'hovering' || drone.status === 'paused'
+    || drone.status === 'emergency_stop' || drone.status === 'emergency_landing'
 
   // 位置更新（仅当坐标有效且处于活跃飞行状态时）
   if (osd.longitude && osd.latitude && isActive) {
@@ -811,6 +853,7 @@ function handleOSDMessage(droneId: string, payload: any) {
   if (isActive) {
     drone.heightAboveTakeoff = osd.height ?? drone.heightAboveTakeoff
     drone.speed = osd.horizontal_speed ?? drone.speed
+    drone.verticalSpeed = osd.vertical_speed ?? drone.verticalSpeed
     drone.heading = osd.attitude_yaw ?? drone.heading
     drone.waypointIndex = osd.waypoint_index ?? drone.waypointIndex
     drone.totalWaypoints = osd.total_waypoints ?? drone.totalWaypoints
@@ -822,11 +865,6 @@ function handleOSDMessage(droneId: string, payload: any) {
     if (osd.wind_speed != null) drone.windSpeed = osd.wind_speed
     if (osd.wind_direction != null) drone.windDirection = osd.wind_direction
     if (osd.wind_warning != null) drone.windWarning = osd.wind_warning
-  }
-
-  // 状态更新
-  if (flightStatus) {
-    drone.status = flightStatus
   }
 
   if (selectedDroneId.value === actualDroneId) {
@@ -853,8 +891,11 @@ function handleStateMessage(droneId: string, payload: any) {
     if (oa.downside) parts.push('下方')
     drone.obstacleAvoidance = parts.length > 0 ? parts.join('/') : ''
   }
-  if (state.mode_code != null) {
-    drone.status = modeCodeToStatus(state.mode_code, drone.status)
+  // 飞行状态：优先用 state.flight_status（仿真扩展字段），其次 mode_code 映射
+  if (state.flight_status) {
+    drone.status = state.flight_status
+  } else if (state.mode_code != null) {
+    drone.status = modeCodeToStatus(state.mode_code)
   }
 
   if (selectedDroneId.value === actualDroneId) {
@@ -862,10 +903,13 @@ function handleStateMessage(droneId: string, payload: any) {
   }
 }
 
-function modeCodeToStatus(code: number, current: string): string {
-  if (code === 5) return 'running' // wayline flight
-  // mode_code=0 可能是 idle/paused/completed，保持 OSD 中更准确的状态
-  return current || 'idle'
+function modeCodeToStatus(code: number): string {
+  switch (code) {
+    case 5: return 'running'    // Wayline
+    case 2: return 'emergency_landing' // Auto Landing
+    case 7: return 'emergency_stop'    // Failsafe/Emergency
+    default: return 'idle'
+  }
 }
 
 onMounted(async () => {
@@ -898,6 +942,7 @@ onMounted(async () => {
       alt: debugWps[0].alt,
       heightAboveTakeoff: debugWps[0].height,
       speed: debugWps[0].speed,
+      verticalSpeed: 0,
       heading: debugWps[0].heading,
       status: 'idle',
       waypointIndex: 0,

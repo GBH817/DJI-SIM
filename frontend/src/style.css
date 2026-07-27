@@ -343,6 +343,16 @@ body {
   background-color: #4488ff;
 }
 
+.drone-status-dot.emergency_stop,
+.drone-status-dot.emergency_stopped {
+  background-color: #ff4444;
+}
+
+.drone-status-dot.emergency_landing,
+.drone-status-dot.emergency_landed {
+  background-color: #ffaa00;
+}
+
 /* ========== 状态面板 ========== */
 .status-row {
   display: flex;
@@ -394,6 +404,18 @@ body {
 .status-badge.hovering {
   background-color: rgba(255, 200, 0, 0.15);
   color: #ffc800;
+}
+
+.status-badge.emergency_stop,
+.status-badge.emergency_stopped {
+  background-color: rgba(255, 68, 68, 0.15);
+  color: #ff4444;
+}
+
+.status-badge.emergency_landing,
+.status-badge.emergency_landed {
+  background-color: rgba(255, 170, 0, 0.15);
+  color: #ffaa00;
 }
 
 /* 悬停倒计时 */
@@ -512,6 +534,37 @@ body {
   color: white;
 }
 
+.ctrl-btn.drc-land {
+  background-color: #e67e22;
+  color: white;
+}
+
+.ctrl-btn.drc-stop {
+  background-color: #c0392b;
+  color: white;
+}
+
+.drc-control {
+  margin-top: 12px;
+}
+
+.drc-control label {
+  font-size: 12px;
+  color: #e74c3c;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.drc-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.drc-buttons .ctrl-btn {
+  flex: 1;
+  font-size: 12px;
+  padding: 7px 8px;
+}
 .ctrl-btn.wind-off {
   background-color: #555;
   color: #ccc;

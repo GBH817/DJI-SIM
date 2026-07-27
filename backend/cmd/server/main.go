@@ -63,6 +63,8 @@ func main() {
 
 	// 订阅 thing/product/+/services，接收飞行控制指令（必须在 simEngine 初始化之后）
 	setupServiceSubscriber()
+	// 订阅 thing/product/+/drc/down，接收远程控制指令（DRC）
+	setupDRCSubscriber()
 
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{
@@ -315,4 +317,63 @@ func setupServiceSubscriber() {
 	}
 
 	log.Println("[Services] 已订阅 thing/product/+/services")
+}
+
+type drcCommand struct {
+	Method string          `json:"method"`
+	Seq    int             `json:"seq"`
+	Data   json.RawMessage `json:"data"`
+}
+
+func setupDRCSubscriber() {
+	opts := pahomqtt.NewClientOptions()
+	opts.AddBroker("tcp://127.0.0.1:1883")
+	opts.SetClientID("drone-sim-drc-sub")
+	opts.SetCleanSession(true)
+	opts.SetAutoReconnect(true)
+
+	opts.SetDefaultPublishHandler(func(client pahomqtt.Client, msg pahomqtt.Message) {
+		topic := msg.Topic()
+		parts := strings.Split(topic, "/")
+		if len(parts) < 3 {
+			return
+		}
+		droneID := parts[2]
+
+		var cmd drcCommand
+		if err := json.Unmarshal(msg.Payload(), &cmd); err != nil {
+			log.Println("[DRC] 解析指令失败:", err)
+			return
+		}
+
+		log.Printf("[DRC] 收到指令 drone=%s method=%s seq=%d", droneID, cmd.Method, cmd.Seq)
+
+		var execErr error
+		switch cmd.Method {
+		case "drone_emergency_stop":
+			execErr = simEngine.EmergencyStop(droneID)
+		case "drc_emergency_landing":
+			execErr = simEngine.EmergencyLanding(droneID)
+		default:
+			log.Println("[DRC] 未知方法:", cmd.Method)
+			return
+		}
+
+		if execErr != nil {
+			log.Println("[DRC] 执行失败:", execErr)
+		}
+	})
+
+	client := pahomqtt.NewClient(opts)
+	if token := client.Connect(); token.Wait() && token.Error() != nil {
+		log.Println("[DRC] 订阅连接失败:", token.Error())
+		return
+	}
+
+	if token := client.Subscribe("thing/product/+/drc/down", 0, nil); token.Wait() && token.Error() != nil {
+		log.Println("[DRC] 订阅失败:", token.Error())
+		return
+	}
+
+	log.Println("[DRC] 已订阅 thing/product/+/drc/down")
 }
