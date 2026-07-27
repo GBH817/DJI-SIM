@@ -1,0 +1,23 @@
+# Checklist
+
+- [x] 后端 Go module 初始化成功，`go build` 无报错
+- [x] `POST /api/upload` 支持多文件上传，能正确解析 KMZ 中的 template.kml 和 waylines.wpml
+- [x] KMZ 解析提取的航点包含正确的 lng、lat、高度、速度信息
+- [x] RouteParser 接口定义清晰，ParserRegistry 支持按扩展名注册和查找
+- [x] 轨迹插值器能根据航点速度和距离计算航段时间，生成正确的中间位置
+- [x] 仿真引擎按 100ms tick 推进，支持启动/暂停/继续/停止
+- [x] MQTT 遥测数据格式符合 Remote ID 约定，每个 tick 发布到正确 topic
+- [x] 多机仿真时每台无人机使用独立 topic，互不干扰
+- [x] `POST /api/sim/start|pause|resume|stop` 四个 API 正常工作
+- [x] `GET /api/sim/status` 返回所有仿真实例的运行状态
+- [x] 前端 Vue 项目创建成功，CesiumJS 正常加载 3D 地球
+- [x] 前端能上传 KMZ 文件并获取解析结果
+- [x] 解析成功后在地球上显示完整规划航线（虚线）
+- [x] 仿真开始后无人机模型实时更新位置和朝向
+- [x] 飞行轨迹线随无人机移动实时绘制
+- [x] 侧边栏显示无人机完整状态信息（经纬度、高度、速度、航向等）
+- [x] 多机列表管理正常工作，可选择单机或全览
+- [x] MQTT 订阅正常接收遥测数据，驱动 3D 模型更新
+- [x] 仿真控制按钮正常响应（开始/暂停/继续/停止）
+- [x] Debug 模式（`?debug=1`）不依赖后端和 MQTT 独立运行
+- [x] nginx.conf 配置将前端静态文件和后端 API 统一在一个端口

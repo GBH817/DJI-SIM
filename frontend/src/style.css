@@ -1,0 +1,769 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  background-color: #0f0f1a;
+  color: #eee;
+}
+
+#app {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ========== 悬浮面板通用 ========== */
+.float-panel {
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  width: 310px;
+  background: rgba(26, 26, 46, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: #eee;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 14px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  z-index: 100;
+  transition: transform 0.3s ease, opacity 0.3s ease;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+/* 自定义滚动条 */
+.float-panel::-webkit-scrollbar,
+.panel-top::-webkit-scrollbar,
+.panel-bottom::-webkit-scrollbar {
+  width: 5px;
+}
+
+.float-panel::-webkit-scrollbar-track,
+.panel-top::-webkit-scrollbar-track,
+.panel-bottom::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.float-panel::-webkit-scrollbar-thumb,
+.panel-top::-webkit-scrollbar-thumb,
+.panel-bottom::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+.float-panel::-webkit-scrollbar-thumb:hover,
+.panel-top::-webkit-scrollbar-thumb:hover,
+.panel-bottom::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.float-left {
+  left: 10px;
+}
+
+.float-left.collapsed {
+  transform: translateX(calc(-100% - 20px));
+  opacity: 0;
+  pointer-events: none;
+}
+
+.float-right {
+  right: 10px;
+  bottom: auto;
+  max-height: calc(100vh - 20px);
+}
+
+.float-right.collapsed {
+  transform: translateX(calc(100% + 20px));
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 左侧面板折叠按钮（在面板右边缘） */
+.float-toggle {
+  position: absolute;
+  right: -28px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 200;
+  width: 28px;
+  height: 56px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 0 6px 6px 0;
+  background: rgba(26, 26, 46, 0.85);
+  color: #8a8aaa;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s, border-color 0.2s;
+  padding: 0;
+  line-height: 1;
+}
+
+.float-toggle:hover {
+  color: #00ffff;
+  border-color: rgba(0, 255, 255, 0.4);
+}
+
+/* 右侧面板折叠按钮（在面板左边缘） */
+.float-toggle-right {
+  left: -28px;
+  right: auto;
+  border-radius: 6px 0 0 6px;
+}
+
+/* 左侧面板上下分区 */
+.panel-top {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 4px;
+}
+
+.panel-bottom {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding-right: 4px;
+}
+
+/* 折叠时按钮稍微露出来 */
+.float-left.collapsed .float-toggle {
+  right: auto;
+  left: calc(100% + 10px);
+  border-radius: 0 6px 6px 0;
+}
+
+.float-right.collapsed .float-toggle-right {
+  left: auto;
+  right: calc(100% + 10px);
+  border-radius: 6px 0 0 6px;
+}
+
+.sidebar-header {
+  padding-bottom: 12px;
+  border-bottom: 1px solid #333;
+}
+
+.sidebar-header h2 {
+  margin: 0;
+  font-size: 18px;
+  color: #fff;
+  letter-spacing: 1px;
+}
+
+/* ========== 分区面板通用 ========== */
+.upload-section,
+.drone-list,
+.status-panel,
+.control-panel {
+  background-color: #16213e;
+  border-radius: 8px;
+  padding: 12px;
+  border: 1px solid #2a2a4a;
+}
+
+.upload-section h3,
+.drone-list h3,
+.status-panel h3,
+.control-panel h3 {
+  margin: 0 0 10px 0;
+  font-size: 13px;
+  color: #8a8aaa;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #2a2a4a;
+}
+
+/* ========== 上传区域 ========== */
+.file-upload-btn {
+  display: inline-block;
+  width: 100%;
+  padding: 10px 14px;
+  background-color: #0f3460;
+  color: #ccc;
+  border-radius: 6px;
+  font-size: 13px;
+  text-align: center;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  overflow: hidden;
+  position: relative;
+}
+
+.file-upload-btn:hover {
+  background-color: #1a508b;
+  color: #fff;
+}
+
+.file-upload-btn input[type='file'] {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* ========== 无人机列表 ========== */
+.empty {
+  color: #555;
+  font-size: 13px;
+  text-align: center;
+  padding: 16px 0;
+}
+
+.drone-item {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 10px;
+  margin-bottom: 4px;
+  background-color: #0f3460;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  border-left: 3px solid transparent;
+}
+
+.drone-item-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.drone-item-sn {
+  font-size: 11px;
+  color: #8899bb;
+  margin-top: 3px;
+  margin-left: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
+}
+
+.drone-item:hover {
+  background-color: #1a508b;
+}
+
+.drone-item.active {
+  background-color: #1a508b;
+  border-left-color: #00ffff;
+}
+
+.drone-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drone-speed {
+  color: #8a8aaa;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.drone-delete-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: #8a8aaa;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.drone-delete-btn:hover {
+  background: #e74c3c;
+  color: #fff;
+}
+
+.drone-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #666;
+  flex-shrink: 0;
+}
+
+.drone-status-dot.idle {
+  background-color: #888;
+}
+
+.drone-status-dot.flying {
+  background-color: #00ff88;
+}
+
+.drone-status-dot.error {
+  background-color: #ff4444;
+}
+
+.drone-status-dot.running {
+  background-color: #00ff88;
+}
+
+.drone-status-dot.paused {
+  background-color: #ffaa00;
+}
+
+.drone-status-dot.completed {
+  background-color: #4488ff;
+}
+
+/* ========== 状态面板 ========== */
+.status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 0;
+  font-size: 13px;
+}
+
+.status-row .label {
+  color: #8a8aaa;
+}
+
+.status-row .value {
+  color: #eee;
+  font-family: 'Consolas', 'Courier New', monospace;
+}
+
+/* ========== 状态标签 ========== */
+.status-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.status-badge.running {
+  background-color: rgba(0, 255, 136, 0.15);
+  color: #00ff88;
+}
+
+.status-badge.paused {
+  background-color: rgba(255, 170, 0, 0.15);
+  color: #ffaa00;
+}
+
+.status-badge.idle {
+  background-color: rgba(136, 136, 136, 0.15);
+  color: #888;
+}
+
+.status-badge.completed {
+  background-color: rgba(68, 136, 255, 0.15);
+  color: #4488ff;
+}
+
+.status-badge.hovering {
+  background-color: rgba(255, 200, 0, 0.15);
+  color: #ffc800;
+}
+
+/* 悬停倒计时 */
+.hover-timer {
+  color: #ffc800;
+  font-size: 14px;
+  font-weight: bold;
+  text-align: center;
+  padding: 6px 0;
+  border: 1px solid rgba(255, 200, 0, 0.3);
+  border-radius: 4px;
+  margin-bottom: 8px;
+  background: rgba(255, 200, 0, 0.08);
+}
+
+/* 航线元数据 */
+.meta-section {
+  margin-bottom: 12px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.meta-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.meta-row .label {
+  color: #888;
+}
+
+.meta-row .value {
+  color: #ccc;
+  font-weight: 500;
+}
+
+/* ========== 状态网格 ========== */
+.status-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ========== 进度条 ========== */
+.progress-bar {
+  width: 100%;
+  height: 4px;
+  background-color: #2a2a4a;
+  border-radius: 2px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background-color: #00ff88;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+/* ========== 控制面板 ========== */
+.control-panel {
+}
+
+.control-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ctrl-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.1s;
+}
+
+.ctrl-btn:hover:not(:disabled) {
+  transform: scale(1.05);
+}
+
+.ctrl-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.ctrl-btn.start {
+  background-color: #00ff88;
+  color: #1a1a2e;
+}
+
+.ctrl-btn.pause {
+  background-color: #ffaa00;
+  color: #1a1a2e;
+}
+
+.ctrl-btn.resume {
+  background-color: #0088ff;
+  color: white;
+}
+
+.ctrl-btn.stop {
+  background-color: #ff4444;
+  color: white;
+}
+
+.ctrl-btn.rth {
+  background-color: #ff8c00;
+  color: white;
+}
+
+.ctrl-btn.wind-off {
+  background-color: #555;
+  color: #ccc;
+  font-size: 12px;
+  padding: 5px 12px;
+  margin-top: 6px;
+  width: 100%;
+}
+
+.speed-control {
+  margin-top: 16px;
+}
+
+.speed-control label {
+  font-size: 12px;
+  color: #8a8aaa;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.speed-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.speed-btn {
+  padding: 6px 16px;
+  border: 1px solid #2a2a4a;
+  border-radius: 20px;
+  background-color: rgba(255, 255, 255, 0.05);
+  color: #8a8aaa;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.speed-btn:hover {
+  border-color: #00ffff;
+  color: #00ffff;
+}
+
+.speed-btn.active {
+  background-color: rgba(0, 255, 255, 0.15);
+  border-color: #00ffff;
+  color: #00ffff;
+  box-shadow: 0 0 8px rgba(0, 255, 255, 0.3);
+}
+
+/* ========== 进度条 ========== */
+.progress-bar {
+  width: 100%;
+  height: 4px;
+  background-color: #2a2a4a;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.progress-fill {
+  height: 100%;
+  background-color: #00ffff;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+/* ========== Cesium 容器 ========== */
+.cesium-container {
+  flex: 1;
+  width: 100%;
+  height: 100vh;
+  position: relative;
+}
+
+#cesiumContainer {
+  width: 100%;
+  height: 100%;
+}
+
+/* ========== 风力模拟 ========== */
+.wind-control {
+  margin-top: 16px;
+}
+
+.wind-control label {
+  font-size: 12px;
+  color: #8a8aaa;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.wind-resist-tip {
+  font-size: 11px;
+  color: #666;
+}
+
+.wind-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+/* 风向罗盘 */
+.wind-dial-row {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+
+.wind-compass {
+  width: 100px;
+  height: 100px;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.wind-compass:active {
+  cursor: grabbing;
+}
+
+.compass-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* 风参数输入行 */
+.wind-input-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.wind-dir-input {
+  width: 55px;
+  padding: 5px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #ccc;
+  font-size: 13px;
+  text-align: center;
+}
+
+.wind-dir-unit,
+.wind-unit {
+  font-size: 12px;
+  color: #888;
+  flex-shrink: 0;
+}
+
+.wind-speed-input {
+  width: 65px;
+  padding: 5px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #ccc;
+  font-size: 13px;
+  text-align: center;
+}
+
+.wind-dir-input:focus,
+.wind-speed-input:focus {
+  outline: none;
+  border-color: rgba(0, 255, 255, 0.5);
+}
+
+.wind-dir-input:disabled,
+.wind-speed-input:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.ctrl-btn.wind-apply {
+  background-color: rgba(0, 255, 136, 0.2);
+  color: #00ff88;
+  border: 1px solid rgba(0, 255, 136, 0.3);
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.ctrl-btn.wind-apply:hover:not(:disabled) {
+  background-color: rgba(0, 255, 136, 0.35);
+}
+
+.ctrl-btn.wind-apply:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.wind-dir-select {
+  padding: 6px 8px;
+  border: 1px solid #2a2a4a;
+  border-radius: 6px;
+  background-color: rgba(255, 255, 255, 0.05);
+  color: #ccc;
+  font-size: 13px;
+  cursor: pointer;
+  height: 32px;
+}
+
+.wind-dir-select:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.wind-speed-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.speed-btn.danger {
+  border-color: rgba(255, 68, 68, 0.5);
+  color: #ff6666;
+}
+
+.speed-btn.danger:hover {
+  border-color: #ff4444;
+  color: #ff4444;
+}
+
+.speed-btn.danger.active {
+  background-color: rgba(255, 68, 68, 0.2);
+  border-color: #ff4444;
+  color: #ff4444;
+  box-shadow: 0 0 8px rgba(255, 68, 68, 0.4);
+}
+
+/* 风力警告横幅 */
+.wind-warning {
+  color: #ff4444;
+  font-size: 12px;
+  font-weight: bold;
+  text-align: center;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 68, 68, 0.4);
+  border-radius: 4px;
+  margin-bottom: 8px;
+  background: rgba(255, 68, 68, 0.1);
+}
+
+/* 风速文字超限变红 */
+.wind-danger {
+  color: #ff6666 !important;
+}

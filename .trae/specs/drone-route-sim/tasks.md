@@ -1,0 +1,60 @@
+# Tasks
+
+- [x] Task 1: 搭建 Go 后端项目骨架
+  - [x] 初始化 Go module，创建项目目录结构
+  - [x] 实现 HTTP 路由框架（gin），配置 CORS
+  - [x] 创建 `/api/upload` 多文件上传接口
+- [x] Task 2: 实现航线解析器架构和 KMZ 解析
+  - [x] 定义 RouteParser 接口和 Waypoint/Trajectory 领域模型
+  - [x] 实现 ParserRegistry 注册机制
+  - [x] 实现 KMZParser（解压 KMZ -> 提取 template.kml 和 waylines.wpml -> 解析 XML）
+  - [x] 提取航点数据：坐标(lng,lat)、高度(executeHeight/ellipsoidHeight)、速度、heading
+  - [x] 提取任务配置信息：takeOffRefPoint、finishAction、globalRTHHeight 等
+- [x] Task 3: 实现轨迹插值与仿真引擎
+  - [x] 根据航点速度和距离计算航段飞行时间
+  - [x] 实现线性插值器，在相邻航点间按时间生成中间位置
+  - [x] 实现仿真引擎（ticker-driven，100ms/step）
+  - [x] 支持启动、暂停、继续、停止仿真
+  - [x] 实现多机仿真实例管理（map[droneId]*Engine）
+- [x] Task 4: 实现 MQTT 遥测发布
+  - [x] MQTT client 连接管理（可配置 broker 地址）
+  - [x] 定义 Remote ID 遥测 JSON 格式
+  - [x] 仿真引擎每个 tick 发布 `drone/{id}/telemetry`
+  - [x] 仿真状态变更通知 `drone/{id}/status`
+- [x] Task 5: 实现后端控制 API
+  - [x] `POST /api/sim/start` - 启动指定航线仿真
+  - [x] `POST /api/sim/pause` - 暂停仿真
+  - [x] `POST /api/sim/resume` - 继续仿真
+  - [x] `POST /api/sim/stop` - 停止仿真
+  - [x] `GET /api/sim/status` - 获取所有仿真实例状态
+- [x] Task 6: 搭建 Vue 3 前端项目骨架
+  - [x] 使用 Vite 创建 Vue 3 + TypeScript 项目
+  - [x] 集成 CesiumJS
+  - [x] 创建基础页面布局（Cesium 容器 + 侧边栏）
+- [x] Task 7: 实现前端 Cesium 3D 可视化
+  - [x] 初始化 Cesium Viewer，配置默认视角深圳
+  - [x] 实现轨迹预览：解析成功后在地球上绘制规划航线（虚线polyline）
+  - [x] 实现无人机 Entity（点模型 + label），实时更新位置和朝向
+  - [x] 实时绘制飞行轨迹线
+- [x] Task 8: 实现前端 MQTT 遥测订阅
+  - [x] 封装 MQTT.js 连接和订阅
+  - [x] 订阅 `drone/{id}/telemetry` 更新无人机模型位置
+  - [x] 多机订阅管理
+- [x] Task 9: 实现前端状态面板与多机管理
+  - [x] 侧边栏显示当前选中无人机的全部状态信息
+  - [x] 无人机列表管理（多机选择/切换）
+  - [x] KMZ 文件上传组件（拖拽上传）
+- [x] Task 10: 实现仿真控制面板与 debug 模式
+  - [x] 仿真控制按钮（开始/暂停/继续/停止）
+  - [x] Debug 模式：URL 参数 `?debug=1` 时使用模拟数据循环播放
+  - [x] 仿真速度调节（1x/2x/5x）
+
+# Task Dependencies
+- Task 2 依赖 Task 1（后端骨架）
+- Task 3 依赖 Task 2（轨迹模型和解析结果）
+- Task 4 依赖 Task 3（仿真引擎的 tick 输出）
+- Task 5 依赖 Task 3、Task 4（API 调用引擎和 MQTT）
+- Task 6 和 Task 7 无后端依赖，可并行开发
+- Task 8 依赖 Task 4（MQTT topic 约定）
+- Task 9 依赖 Task 7（可视化基础）、Task 8（数据源）
+- Task 10 依赖 Task 7、Task 8（控制和数据就绪）
