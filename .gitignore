@@ -38,3 +38,6 @@ lerna-debug.log*
 
 # OS
 Thumbs.db
+
+# 建筑原始数据（瓦片已生成到 frontend/public/tiles/）
+data/

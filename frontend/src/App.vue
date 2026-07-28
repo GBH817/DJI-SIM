@@ -155,6 +155,13 @@
         </button>
         <div class="control-panel">
           <h3>仿真控制</h3>
+          <div class="toggle-row">
+            <span class="toggle-label">建筑显示</span>
+            <label class="toggle-switch">
+              <input type="checkbox" v-model="buildingsVisible" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
           <div class="control-buttons">
             <button class="ctrl-btn start" @click="startSimulation"
               :disabled="!selectedDroneId || selectedDrone?.status === 'running'">▶ 开始</button>
@@ -243,7 +250,7 @@ import { useDebug } from './composables/useDebug'
 import { useMQTT } from './composables/useMQTT'
 import axios from 'axios'
 
-const { viewer, init: initCesium, destroy: destroyCesium } = useCesium('cesiumContainer')
+const { viewer, init: initCesium, destroy: destroyCesium, loadShenzhenBuildings, buildingsVisible } = useCesium('cesiumContainer')
 const { addTrajectory, updateDronePosition, clearPreview, removeTrajectory, flyToTrajectory, resetPath, getTakeOffPoint } = useTrajectory(viewer)
 const { isDebug, init: initDebug, startDebugLoop, stopDebugLoop, getDebugWaypoints } = useDebug()
 const { connect: connectMQTT, subscribeRaw, publish: publishMQTT, disconnect: disconnectMQTT } = useMQTT('ws://localhost:1884')
@@ -915,6 +922,11 @@ function modeCodeToStatus(code: number): string {
 onMounted(async () => {
   initCesium()
   initDebug()
+
+  // 加载深圳建筑白模数据
+  setTimeout(() => {
+    loadShenzhenBuildings()
+  }, 2000)
 
   if (isDebug.value) {
       const debugWps = getDebugWaypoints()
