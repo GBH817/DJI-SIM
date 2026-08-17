@@ -63,31 +63,40 @@ type Trajectory struct {
 	FlyToWaylineMode       string        `json:"flyToWaylineMode"`        // 飞向首航点模式: safely / pointToPoint
 }
 
-// DroneModelName 根据 DJI 枚举值映射飞行器型号名称
+// MapDroneModel 根据 DJI 官方 Cloud API 枚举值映射飞行器型号名称
+// 参考: https://developer.dji.com/doc/cloud-api-tutorial/cn/overview/product-support.html
 func MapDroneModel(enumValue, subValue int) string {
 	switch {
+	case enumValue == 103 && subValue == 0:
+		return "Matrice 400"
+	case enumValue == 89 && subValue == 0:
+		return "Matrice 350 RTK"
+	case enumValue == 60 && subValue == 0:
+		return "Matrice 300 RTK"
 	case enumValue == 67 && subValue == 0:
 		return "Matrice 30"
 	case enumValue == 67 && subValue == 1:
 		return "Matrice 30T"
 	case enumValue == 77 && subValue == 0:
-		return "Matrice 300 RTK"
-	case enumValue == 91 && subValue == 0:
-		return "Matrice 350 RTK"
-	case enumValue == 60 && subValue == 0:
 		return "Mavic 3E"
-	case enumValue == 60 && subValue == 1:
+	case enumValue == 77 && subValue == 1:
 		return "Mavic 3T"
-	case enumValue == 60 && subValue == 2:
+	case enumValue == 77 && subValue == 2:
 		return "Mavic 3M"
-	case enumValue == 81 && subValue == 0:
-		return "Mavic 3D"
-	case enumValue == 81 && subValue == 1:
-		return "Mavic 3TD"
-	case enumValue == 100 && subValue == 0:
+	case enumValue == 77 && subValue == 3:
+		return "Mavic 3TA"
+	case enumValue == 91 && subValue == 0:
+		return "Matrice 3D"
+	case enumValue == 91 && subValue == 1:
+		return "Matrice 3TD"
+	case enumValue == 99 && subValue == 0:
 		return "Matrice 4E"
-	case enumValue == 100 && subValue == 1:
+	case enumValue == 99 && subValue == 1:
 		return "Matrice 4T"
+	case enumValue == 100 && subValue == 0:
+		return "Matrice 4D"
+	case enumValue == 100 && subValue == 1:
+		return "Matrice 4TD"
 	default:
 		return "Unknown"
 	}
@@ -102,74 +111,82 @@ type DroneModelSpec struct {
 	MaxWindResistance  float64 // 最大抗风速度 (m/s)，基于大疆官方规格
 }
 
-// GetModelSpec 根据 DJI 枚举值获取机型规格
+// GetModelSpec 根据 DJI 官方枚举值获取机型规格
 func GetModelSpec(enumValue, subValue int) DroneModelSpec {
-	// 基于 DJI 官方技术参数：
-	// M350 RTK: 55min 飞行 / 测于 8m/s 无风空载
-	// M300 RTK: 55min 飞行
-	// M30/M30T: 41min 飞行 / 36min 悬停
-	// Mavic 3E/3T: 45min 飞行 / 38min 悬停
-	// Mavic 3M: 43min 飞行 / 37min 悬停
-	// Mavic 3D/3TD: 45min 飞行
-	// Matrice 4E/4T: 49min 飞行 / 42min 悬停
-	// 所有企业级无人机的抗风能力均为 12 m/s（大疆官方规格）
 	const enterpriseWindResist = 12.0
 
 	switch {
-	case enumValue == 91: // Matrice 350 RTK
+	case enumValue == 103: // Matrice 400: 55min, 23m/s
+		return DroneModelSpec{"Matrice 400", 55 * 60, 55 * 60, 23, enterpriseWindResist}
+	case enumValue == 89: // Matrice 350 RTK: 55min, 23m/s
 		return DroneModelSpec{"Matrice 350 RTK", 55 * 60, 55 * 60, 23, enterpriseWindResist}
-	case enumValue == 77: // Matrice 300 RTK
+	case enumValue == 60: // Matrice 300 RTK: 55min, 23m/s
 		return DroneModelSpec{"Matrice 300 RTK", 55 * 60, 55 * 60, 23, enterpriseWindResist}
-	case enumValue == 67 && subValue == 0: // Matrice 30
+	case enumValue == 67 && subValue == 0: // Matrice 30: 41min飞行/36min悬停, 23m/s
 		return DroneModelSpec{"Matrice 30", 41 * 60, 36 * 60, 23, enterpriseWindResist}
 	case enumValue == 67 && subValue == 1: // Matrice 30T
 		return DroneModelSpec{"Matrice 30T", 41 * 60, 36 * 60, 23, enterpriseWindResist}
-	case enumValue == 60 && subValue == 0: // Mavic 3E
+	case enumValue == 77 && subValue == 0: // Mavic 3E: 45min/38min, 21m/s
 		return DroneModelSpec{"Mavic 3E", 45 * 60, 38 * 60, 21, enterpriseWindResist}
-	case enumValue == 60 && subValue == 1: // Mavic 3T
+	case enumValue == 77 && subValue == 1: // Mavic 3T
 		return DroneModelSpec{"Mavic 3T", 45 * 60, 38 * 60, 21, enterpriseWindResist}
-	case enumValue == 60 && subValue == 2: // Mavic 3M
+	case enumValue == 77 && subValue == 2: // Mavic 3M: 43min/37min
 		return DroneModelSpec{"Mavic 3M", 43 * 60, 37 * 60, 21, enterpriseWindResist}
-	case enumValue == 81: // Mavic 3D/3TD
-		return DroneModelSpec{"Mavic 3D/Mavic 3TD", 45 * 60, 38 * 60, 21, enterpriseWindResist}
-	case enumValue == 100: // Matrice 4E/4T
+	case enumValue == 77 && subValue == 3: // Mavic 3TA
+		return DroneModelSpec{"Mavic 3TA", 45 * 60, 38 * 60, 21, enterpriseWindResist}
+	case enumValue == 91: // Matrice 3D/3TD: 45min, 21m/s
+		return DroneModelSpec{"Matrice 3D/Matrice 3TD", 45 * 60, 38 * 60, 21, enterpriseWindResist}
+	case enumValue == 99: // Matrice 4E/4T: 49min/42min, 21m/s
 		return DroneModelSpec{"Matrice 4E/Matrice 4T", 49 * 60, 42 * 60, 21, enterpriseWindResist}
+	case enumValue == 100: // Matrice 4D/4TD: 49min, 21m/s
+		return DroneModelSpec{"Matrice 4D/Matrice 4TD", 49 * 60, 42 * 60, 21, enterpriseWindResist}
 	default:
 		return DroneModelSpec{"Unknown", 30 * 60, 25 * 60, 15, 10}
 	}
 }
 
-// MapPayloadModel 根据 DJI 枚举值映射负载名称
+// MapPayloadModel 根据 DJI 官方 Cloud API 枚举值映射负载名称
+// 参考: https://developer.dji.com/doc/cloud-api-tutorial/cn/overview/product-support.html
 func MapPayloadModel(enumValue, subValue int) string {
 	switch {
-	case enumValue == 66 && subValue == 0:
+	// 禅思 H20/H20T/H20N/H30/H30T 系列
+	case enumValue == 42:
 		return "H20"
-	case enumValue == 66 && subValue == 1:
+	case enumValue == 43:
 		return "H20T"
-	case enumValue == 52 && subValue == 0:
+	case enumValue == 61:
+		return "H20N"
+	case enumValue == 82:
+		return "H30"
+	case enumValue == 83:
+		return "H30T"
+	// Matrice 30/30T 一体机相机
+	case enumValue == 52:
 		return "M30 Camera"
-	case enumValue == 53 && subValue == 0:
+	case enumValue == 53:
 		return "M30T Camera"
-	case enumValue == 76 && subValue == 0:
+	// Mavic 3 行业系列相机
+	case enumValue == 66:
 		return "M3E Camera"
-	case enumValue == 77 && subValue == 0:
+	case enumValue == 67:
 		return "M3T Camera"
-	case enumValue == 78 && subValue == 0:
-		return "M3M Camera"
-	case enumValue == 85 && subValue == 0:
+	case enumValue == 129:
+		return "M3TA Camera"
+	// Matrice 3D/3TD 相机
+	case enumValue == 80:
 		return "M3D Camera"
-	case enumValue == 86 && subValue == 1:
-		return "M3TD Wide Camera"
-	case enumValue == 86 && subValue == 2:
-		return "M3TD Tele Camera"
-	case enumValue == 97 && subValue == 0:
+	case enumValue == 81:
+		return "M3TD Camera"
+	// Matrice 4E/4T 相机
+	case enumValue == 88:
 		return "M4E Camera"
-	case enumValue == 98 && subValue == 1:
-		return "M4T Wide Camera"
-	case enumValue == 98 && subValue == 2:
-		return "M4T Tele Camera"
-	case enumValue == 99 && subValue == 2:
-		return "M4T Hybrid"
+	case enumValue == 89:
+		return "M4T Camera"
+	// Matrice 4D/4TD 相机
+	case enumValue == 98:
+		return "M4D Camera"
+	case enumValue == 99:
+		return "M4TD Camera"
 	default:
 		return "Unknown"
 	}

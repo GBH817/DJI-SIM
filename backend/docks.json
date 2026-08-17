@@ -1,0 +1,11 @@
+[
+  {
+    "sn": "SDFSADRKLWEJQRH321",
+    "droneSn": "CHLPWO2RVY13YNEV",
+    "broker": "mqtt://192.168.8.114:1883",
+    "username": "dji_dock",
+    "password": "power_your_dreams",
+    "orgId": "4",
+    "bindingCode": "acus2025"
+  }
+]

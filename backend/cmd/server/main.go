@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
 	"drone-sim-backend/internal/config"
+	"drone-sim-backend/internal/dock"
 	"drone-sim-backend/internal/engine"
 	"drone-sim-backend/internal/mqtt"
 	"drone-sim-backend/internal/parser"
@@ -20,9 +22,9 @@ import (
 
 var (
 	simEngine            *engine.Engine
-	mqttPublisher        *mqtt.Publisher // 外部 Broker（供其他系统）
 	localPublisher       *mqtt.Publisher // 内嵌 Broker（供前端）
 	mqttBroker           *mqtt.EmbeddedBroker
+	dockManager          *dock.Manager
 	uploadedTrajectories = make(map[string]*trajectory.Trajectory) // droneId -> traj
 )
 
@@ -35,13 +37,6 @@ func main() {
 		log.Fatalf("[MQTT Broker] 启动失败: %v", err)
 	}
 
-	// 初始化 MQTT Publisher，可通过环境变量 MQTT_BROKER 配置目标地址
-	mqttPublisher = mqtt.NewPublisher(cfg.MQTTBroker, cfg.MQTTClientID, cfg.MQTTUsername, cfg.MQTTPassword)
-	if err := mqttPublisher.Connect(); err != nil {
-		log.Fatalf("[MQTT] Publisher 连接失败: %v", err)
-	}
-	log.Println("[MQTT] Publisher 已连接到外部 Broker:", cfg.MQTTBroker)
-
 	// 同时连接到内嵌 Broker，供前端 WebSocket 订阅
 	localPublisher = mqtt.NewPublisher("tcp://127.0.0.1:1883", cfg.MQTTClientID+"-local", "", "")
 	if err := localPublisher.Connect(); err != nil {
@@ -49,17 +44,35 @@ func main() {
 	}
 	log.Println("[MQTT] 内嵌 Publisher 已连接到本地 Broker")
 
-	// 初始化仿真引擎，传入遥测回调和模式变更回调（双写）
+	// 机巢管理器：每台机巢独立连接自己的 broker，持久化到 JSON
+	dockManager = dock.NewManager(cfg.DockStorePath,
+		func(sn string, payload []byte, reply func(topic string, payload []byte)) {
+			replyBytes := buildServiceReply(sn, payload)
+			if replyBytes != nil {
+				reply("thing/product/"+sn+"/services_reply", replyBytes)
+			}
+		},
+		func(sn string, payload []byte) {
+			dispatchDRCCommand(sn, payload)
+		},
+	)
+
+	// 初始化仿真引擎，传入遥测回调和模式变更回调（内嵌 + 各自机巢 broker）
 	simEngine = engine.NewEngine(
 		func(tel trajectory.RemoteIDTelemetry) {
 			localPublisher.PublishTelemetry(tel)
-			mqttPublisher.PublishTelemetry(tel)
+			dockManager.PublishTelemetry(tel.DroneID, tel)
 		},
 		func(droneID, status string) {
 			localPublisher.PublishModeChange(droneID, status)
-			mqttPublisher.PublishModeChange(droneID, status)
+			dockManager.PublishModeChange(droneID, status)
 		},
 	)
+
+	// 恢复并连接已持久化的机巢（必须在 simEngine 初始化之后，避免指令到达时引擎为空）
+	if err := dockManager.Start(); err != nil {
+		log.Fatalf("[Dock] 机巢管理器启动失败: %v", err)
+	}
 
 	// 订阅 thing/product/+/services，接收飞行控制指令（必须在 simEngine 初始化之后）
 	setupServiceSubscriber()
@@ -92,6 +105,9 @@ func main() {
 			return
 		}
 
+		// droneSn 可选，外部系统传入则使用外部 SN 作为 droneID
+		droneSn := c.PostForm("droneSn")
+
 		var results []*trajectory.Trajectory
 		for _, fileHeader := range files {
 			file, err := fileHeader.Open()
@@ -122,15 +138,20 @@ func main() {
 				return
 			}
 
+			// 如果外部传入了 droneSn，使用外部 SN 作为 droneID
+			if droneSn != "" {
+				traj.ID = droneSn
+			}
+
 			// 注册到引擎
 			droneID := simEngine.AddDrone(traj)
 			traj.ID = droneID
 			uploadedTrajectories[droneID] = traj
 			results = append(results, traj)
 
-			// 发布设备上线 state 消息（双写）
+			// 发布设备上线 state 消息（内嵌 + 对应机巢 broker）
 			localPublisher.PublishDeviceOnline(droneID)
-			mqttPublisher.PublishDeviceOnline(droneID)
+			dockManager.PublishDeviceOnline(droneID)
 		}
 
 		c.JSON(http.StatusOK, gin.H{
@@ -198,6 +219,24 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"success": true, "data": trajs})
 	})
 
+	// 查询单条航线数据
+	r.GET("/api/sim/trajectory/:id", func(c *gin.Context) {
+		droneID := c.Param("id")
+		traj, ok := uploadedTrajectories[droneID]
+		if !ok {
+			c.JSON(http.StatusNotFound, gin.H{"error": "航线不存在"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": traj})
+	})
+
+	// 机巢注册管理
+	r.GET("/api/docks", listDocks)
+	r.POST("/api/docks", registerDock)
+	r.PUT("/api/docks/:sn", updateDock)
+	r.DELETE("/api/docks/:sn", removeDock)
+	r.POST("/api/docks/:sn/reconnect", reconnectDock)
+
 	// 启动服务
 	log.Println("[Server] 启动在端口", cfg.ServerPort)
 	if err := r.Run(cfg.ServerPort); err != nil {
@@ -254,55 +293,10 @@ func setupServiceSubscriber() {
 		}
 		droneID := parts[2]
 
-		var cmd djiServiceCommand
-		if err := json.Unmarshal(msg.Payload(), &cmd); err != nil {
-			log.Println("[Services] 解析指令失败:", err)
-			return
+		replyBytes := buildServiceReply(droneID, msg.Payload())
+		if replyBytes != nil {
+			client.Publish("thing/product/"+droneID+"/services_reply", 0, false, replyBytes)
 		}
-
-		log.Printf("[Services] 收到指令 drone=%s method=%s", droneID, cmd.Data.Method)
-
-		var execErr error
-		switch cmd.Data.Method {
-		case "flight_task_execute":
-			execErr = simEngine.Start(droneID)
-		case "flight_task_pause":
-			execErr = simEngine.Pause(droneID)
-		case "flight_task_resume":
-			execErr = simEngine.Resume(droneID)
-		case "flight_task_terminate":
-			execErr = simEngine.Stop(droneID)
-		case "flight_task_return_home":
-			execErr = simEngine.ReturnHome(droneID)
-		case "sim_set_speed":
-			execErr = simEngine.SetSpeed(droneID, cmd.Data.Speed)
-		case "sim_set_wind":
-			execErr = simEngine.SetWind(droneID, cmd.Data.Speed, cmd.Data.Direction)
-		default:
-			log.Println("[Services] 未知方法:", cmd.Data.Method)
-			return
-		}
-
-		result := 0
-		if execErr != nil {
-			result = 1
-			log.Println("[Services] 执行失败:", execErr)
-		}
-
-		// 回复到 services_reply
-		reply := djiServiceReply{
-			TID:       cmd.TID,
-			BID:       cmd.BID,
-			Timestamp: cmd.Timestamp,
-			Data:      djiReplyData{Result: result},
-		}
-		replyData, _ := json.Marshal(reply)
-		client.Publish(
-			"thing/product/"+droneID+"/services_reply",
-			0,
-			false,
-			string(replyData),
-		)
 	})
 
 	client := pahomqtt.NewClient(opts)
@@ -339,29 +333,7 @@ func setupDRCSubscriber() {
 			return
 		}
 		droneID := parts[2]
-
-		var cmd drcCommand
-		if err := json.Unmarshal(msg.Payload(), &cmd); err != nil {
-			log.Println("[DRC] 解析指令失败:", err)
-			return
-		}
-
-		log.Printf("[DRC] 收到指令 drone=%s method=%s seq=%d", droneID, cmd.Method, cmd.Seq)
-
-		var execErr error
-		switch cmd.Method {
-		case "drone_emergency_stop":
-			execErr = simEngine.EmergencyStop(droneID)
-		case "drc_emergency_landing":
-			execErr = simEngine.EmergencyLanding(droneID)
-		default:
-			log.Println("[DRC] 未知方法:", cmd.Method)
-			return
-		}
-
-		if execErr != nil {
-			log.Println("[DRC] 执行失败:", execErr)
-		}
+		dispatchDRCCommand(droneID, msg.Payload())
 	})
 
 	client := pahomqtt.NewClient(opts)
@@ -376,4 +348,155 @@ func setupDRCSubscriber() {
 	}
 
 	log.Println("[DRC] 已订阅 thing/product/+/drc/down")
+}
+
+// buildServiceReply 解析并执行 services 指令，返回 services_reply 的 JSON 字节；无法处理时返回 nil
+func buildServiceReply(droneID string, payload []byte) []byte {
+	var cmd djiServiceCommand
+	if err := json.Unmarshal(payload, &cmd); err != nil {
+		log.Println("[Services] 解析指令失败:", err)
+		return nil
+	}
+
+	log.Printf("[Services] 收到指令 drone=%s method=%s", droneID, cmd.Data.Method)
+
+	result := 0
+	var execErr error
+	switch cmd.Data.Method {
+	case "flight_task_execute":
+		execErr = simEngine.Start(droneID)
+	case "flight_task_pause":
+		execErr = simEngine.Pause(droneID)
+	case "flight_task_resume":
+		execErr = simEngine.Resume(droneID)
+	case "flight_task_terminate":
+		execErr = simEngine.Stop(droneID)
+	case "flight_task_return_home":
+		execErr = simEngine.ReturnHome(droneID)
+	case "sim_set_speed":
+		execErr = simEngine.SetSpeed(droneID, cmd.Data.Speed)
+	case "sim_set_wind":
+		execErr = simEngine.SetWind(droneID, cmd.Data.Speed, cmd.Data.Direction)
+	default:
+		log.Println("[Services] 未知方法:", cmd.Data.Method)
+		return nil
+	}
+
+	if execErr != nil {
+		result = 1
+		log.Println("[Services] 执行失败:", execErr)
+	}
+
+	reply := djiServiceReply{
+		TID:       cmd.TID,
+		BID:       cmd.BID,
+		Timestamp: cmd.Timestamp,
+		Data:      djiReplyData{Result: result},
+	}
+	replyData, _ := json.Marshal(reply)
+	return replyData
+}
+
+// dispatchDRCCommand 解析并执行 DRC 指令
+func dispatchDRCCommand(droneID string, payload []byte) {
+	var cmd drcCommand
+	if err := json.Unmarshal(payload, &cmd); err != nil {
+		log.Println("[DRC] 解析指令失败:", err)
+		return
+	}
+
+	log.Printf("[DRC] 收到指令 drone=%s method=%s seq=%d", droneID, cmd.Method, cmd.Seq)
+
+	var execErr error
+	switch cmd.Method {
+	case "drone_emergency_stop":
+		execErr = simEngine.EmergencyStop(droneID)
+	case "drc_emergency_landing":
+		execErr = simEngine.EmergencyLanding(droneID)
+	default:
+		log.Println("[DRC] 未知方法:", cmd.Method)
+		return
+	}
+
+	if execErr != nil {
+		log.Println("[DRC] 执行失败:", execErr)
+	}
+}
+
+// ──────────────────────────────────────────────
+// 机巢注册管理 API
+// ──────────────────────────────────────────────
+
+var snPattern = regexp.MustCompile(`^[A-Z0-9]{6,32}$`)
+
+type dockRequest struct {
+	SN          string `json:"sn"`
+	DroneSN     string `json:"droneSn"`
+	Broker      string `json:"broker"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	OrgID       string `json:"orgId"`
+	BindingCode string `json:"bindingCode"`
+}
+
+func listDocks(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": dockManager.List()})
+}
+
+func registerDock(c *gin.Context) {
+	var req dockRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+	sn := strings.ToUpper(strings.TrimSpace(req.SN))
+	if !snPattern.MatchString(sn) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "SN 需为 6-32 位大写英文+数字"})
+		return
+	}
+	if strings.TrimSpace(req.Broker) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Broker 地址不能为空"})
+		return
+	}
+	cfg := dock.Config{SN: sn, DroneSN: req.DroneSN, Broker: req.Broker, Username: req.Username, Password: req.Password, OrgID: req.OrgID, BindingCode: req.BindingCode}
+	if err := dockManager.Register(cfg); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+func updateDock(c *gin.Context) {
+	sn := c.Param("sn")
+	var req dockRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+	if strings.TrimSpace(req.Broker) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Broker 地址不能为空"})
+		return
+	}
+	cfg := dock.Config{SN: sn, DroneSN: req.DroneSN, Broker: req.Broker, Username: req.Username, Password: req.Password, OrgID: req.OrgID, BindingCode: req.BindingCode}
+	if err := dockManager.Update(sn, cfg); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+func removeDock(c *gin.Context) {
+	if err := dockManager.Remove(c.Param("sn")); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+func reconnectDock(c *gin.Context) {
+	if err := dockManager.Reconnect(c.Param("sn")); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }

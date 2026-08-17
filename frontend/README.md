@@ -17,9 +17,9 @@ npm install
 npm run dev
 ```
 
-访问 `http://localhost:5173`。
+访问 `http://localhost:5171`。
 
-Debug 模式（离线，不依赖后端）：`http://localhost:5173?debug=1`
+Debug 模式（离线，不依赖后端）：`http://localhost:5171?debug=1`
 
 ## 构建
 
@@ -43,5 +43,5 @@ src/
 
 ## 依赖的后端服务
 
-- HTTP API：`http://localhost:8080`（上传 KMZ、状态查询、速度/风力设置）
+- HTTP API：`http://localhost:8081`（上传 KMZ、状态查询、速度/风力设置）
 - MQTT WebSocket：`ws://localhost:1884`（遥测订阅 + 飞行指令）

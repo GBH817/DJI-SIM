@@ -179,7 +179,7 @@ drone-sim/
 
 **环境变量**（`backend/.env`）：
 ```
-SERVER_PORT=:8080
+SERVER_PORT=:8081
 MQTT_BROKER=tcp://localhost:1883
 MQTT_CLIENT_ID=drone-sim-server
 ```

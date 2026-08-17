@@ -118,7 +118,7 @@ function createDroneEntity(traj: TrajectoryData): Entity {
     if (takeoffLat !== 0 || takeoffLng !== 0) {
       startLat = takeoffLat
       startLng = takeoffLng
-      startHeight = takeoffAlt > 0 ? takeoffAlt : (traj.waypoints[0]?.ellipsoidHeight || 0)
+      startHeight = (takeoffAlt !== undefined && takeoffAlt !== null && !isNaN(takeoffAlt)) ? takeoffAlt : (traj.waypoints[0]?.ellipsoidHeight || 0)
     } else {
       const firstWp = traj.waypoints[0]
       startLng = firstWp.lng
@@ -163,7 +163,7 @@ function createDroneEntity(traj: TrajectoryData): Entity {
     if (takeoffLat !== 0 || takeoffLng !== 0) {
       startLat = takeoffLat
       startLng = takeoffLng
-      startHeight = takeoffAlt > 0 ? takeoffAlt : (traj.waypoints[0]?.ellipsoidHeight || 0)
+      startHeight = (takeoffAlt !== undefined && takeoffAlt !== null && !isNaN(takeoffAlt)) ? takeoffAlt : (traj.waypoints[0]?.ellipsoidHeight || 0)
     } else {
       const firstWp = traj.waypoints[0]
       startLng = firstWp.lng
@@ -307,7 +307,7 @@ function createDroneEntity(traj: TrajectoryData): Entity {
     if (takeoffLat !== 0 || takeoffLng !== 0) {
       startLat = takeoffLat
       startLng = takeoffLng
-      startHeight = takeoffAlt > 0 ? takeoffAlt : (traj.waypoints[0]?.ellipsoidHeight || 0)
+      startHeight = (takeoffAlt !== undefined && takeoffAlt !== null && !isNaN(takeoffAlt)) ? takeoffAlt : (traj.waypoints[0]?.ellipsoidHeight || 0)
     } else {
       const firstWp = traj.waypoints[0]
       startLng = firstWp.lng

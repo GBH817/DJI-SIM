@@ -22,24 +22,32 @@ type Publisher struct {
 
 // NewPublisher 创建 MQTT 发布器
 func NewPublisher(broker, clientID, username, password string) *Publisher {
+	p := &Publisher{}
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(broker)
 	opts.SetClientID(clientID)
 	opts.SetAutoReconnect(true)
 	opts.SetCleanSession(true)
+	opts.SetConnectTimeout(5 * time.Second)
 	if username != "" {
 		opts.SetUsername(username)
 		opts.SetPassword(password)
 	}
 	opts.OnConnect = func(c mqtt.Client) {
+		p.mu.Lock()
+		p.connected = true
+		p.mu.Unlock()
 		log.Println("[MQTT] 已连接到 Broker:", broker)
 	}
 	opts.OnConnectionLost = func(c mqtt.Client, err error) {
+		p.mu.Lock()
+		p.connected = false
+		p.mu.Unlock()
 		log.Println("[MQTT] 连接断开:", err)
 	}
 
-	client := mqtt.NewClient(opts)
-	return &Publisher{client: client}
+	p.client = mqtt.NewClient(opts)
+	return p
 }
 
 // Connect 连接 MQTT Broker
@@ -172,6 +180,17 @@ func (p *Publisher) publish(topic string, payload any) {
 		return
 	}
 	token := p.client.Publish(topic, 0, false, string(data))
+	token.Wait()
+}
+
+// publishRetained 发布保留消息，新订阅者立即可收到最后一条
+func (p *Publisher) publishRetained(topic string, payload any) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		log.Println("[MQTT] JSON 序列化失败:", err)
+		return
+	}
+	token := p.client.Publish(topic, 0, true, string(data))
 	token.Wait()
 }
 
@@ -368,7 +387,7 @@ func (p *Publisher) PublishDeviceOnline(droneID string) {
 		Gateway:   droneID,
 		Data:      buildState(droneID),
 	}
-	p.publish(fmt.Sprintf("thing/product/%s/state", droneID), msg)
+	p.publishRetained(fmt.Sprintf("thing/product/%s/state", droneID), msg)
 }
 
 // PublishModeChange 飞行模式变更时发布 state topic（大疆规范：通过 mode_code 上报）
@@ -391,7 +410,7 @@ func (p *Publisher) PublishModeChange(droneID, status string) {
 		Gateway:   droneID,
 		Data:      state,
 	}
-	p.publish(fmt.Sprintf("thing/product/%s/state", droneID), msg)
+	p.publishRetained(fmt.Sprintf("thing/product/%s/state", droneID), msg)
 }
 
 func currentTimeMillis() int64 {

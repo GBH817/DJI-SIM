@@ -22,6 +22,19 @@ export interface TelemetryData {
 type TelemetryCallback = (data: TelemetryData) => void
 type RawMessageCallback = (topic: string, payload: any) => void
 
+// MQTT 通配符匹配：+ 匹配单层，# 匹配剩余所有层
+function topicMatches(pattern: string, topic: string): boolean {
+  const patternParts = pattern.split('/')
+  const topicParts = topic.split('/')
+
+  for (let i = 0; i < patternParts.length; i++) {
+    if (patternParts[i] === '#') return true // # 匹配剩余全部
+    if (i >= topicParts.length) return false
+    if (patternParts[i] !== '+' && patternParts[i] !== topicParts[i]) return false
+  }
+  return patternParts.length === topicParts.length
+}
+
 export function useMQTT(brokerUrl?: string) {
   const client: Ref<MqttClient | null> = ref(null)
   const connected: Ref<boolean> = ref(false)
@@ -59,17 +72,18 @@ export function useMQTT(brokerUrl?: string) {
       client.value.on('message', (topic: string, payload: Buffer) => {
         const rawPayload = JSON.parse(payload.toString())
 
-        // 分发给简化格式回调
+        // 分发给简化格式回调（精确匹配）
         const cbs = callbacks.get(topic)
         if (cbs) {
           cbs.forEach(cb => cb(rawPayload))
         }
 
-        // 分发给原始格式回调
-        const rawCbs = rawCallbacks.get(topic)
-        if (rawCbs) {
-          rawCbs.forEach(cb => cb(topic, rawPayload))
-        }
+        // 分发给原始格式回调（支持 MQTT 通配符 + 和 #）
+        rawCallbacks.forEach((rawCbs, pattern) => {
+          if (topicMatches(pattern, topic)) {
+            rawCbs.forEach(cb => cb(topic, rawPayload))
+          }
+        })
       })
 
       // 超时 fallback

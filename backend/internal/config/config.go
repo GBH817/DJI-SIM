@@ -8,11 +8,12 @@ import (
 )
 
 type Config struct {
-	ServerPort   string
-	MQTTBroker   string
-	MQTTClientID string
-	MQTTUsername string
-	MQTTPassword string
+	ServerPort    string
+	MQTTBroker    string
+	MQTTClientID  string
+	MQTTUsername  string
+	MQTTPassword  string
+	DockStorePath string
 }
 
 func LoadConfig() *Config {
@@ -22,11 +23,12 @@ func LoadConfig() *Config {
 	}
 
 	return &Config{
-		ServerPort:   getEnv("SERVER_PORT", ":8080"),
-		MQTTBroker:   getEnv("MQTT_BROKER", "tcp://localhost:1883"),
-		MQTTClientID: getEnv("MQTT_CLIENT_ID", "drone-sim-server"),
-		MQTTUsername: getEnv("MQTT_USERNAME", ""),
-		MQTTPassword: getEnv("MQTT_PASSWORD", ""),
+		ServerPort:    getEnv("SERVER_PORT", ":8081"),
+		MQTTBroker:    getEnv("MQTT_BROKER", "tcp://localhost:1883"),
+		MQTTClientID:  getEnv("MQTT_CLIENT_ID", "drone-sim-server"),
+		MQTTUsername:  getEnv("MQTT_USERNAME", ""),
+		MQTTPassword:  getEnv("MQTT_PASSWORD", ""),
+		DockStorePath: getEnv("DOCK_STORE_PATH", "docks.json"),
 	}
 }
 

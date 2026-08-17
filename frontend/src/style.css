@@ -172,6 +172,37 @@ body {
   letter-spacing: 1px;
 }
 
+/* ========== 左侧 Tab 栏 ========== */
+.tab-bar {
+  display: flex;
+  gap: 6px;
+  padding-bottom: 2px;
+}
+
+.tab {
+  flex: 1;
+  padding: 7px 0;
+  border: 1px solid #2a2a4a;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #8a8aaa;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tab:hover {
+  color: #00ffff;
+  border-color: rgba(0, 255, 255, 0.4);
+}
+
+.tab.active {
+  background: rgba(0, 255, 255, 0.12);
+  border-color: #00ffff;
+  color: #00ffff;
+  box-shadow: 0 0 8px rgba(0, 255, 255, 0.25);
+}
+
 /* ========== 分区面板通用 ========== */
 .upload-section,
 .drone-list,

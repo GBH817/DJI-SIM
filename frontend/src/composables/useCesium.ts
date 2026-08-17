@@ -108,10 +108,10 @@ export function useCesium(containerId: string) {
     const removeHandler = viewer.value.scene.postRender.addEventListener(() => {
       removeHandler()
       viewer.value!.camera.setView({
-        destination: Cartesian3.fromDegrees(113.935092, 22.531564, 5000),
+        destination: Cartesian3.fromDegrees(113.935085694, 22.527709233, 987),
         orientation: {
-          heading: CesiumMath.toRadians(0),
-          pitch: CesiumMath.toRadians(-45),
+          heading: CesiumMath.toRadians(2.355),
+          pitch: CesiumMath.toRadians(-70.66),
           roll: 0,
         },
       })

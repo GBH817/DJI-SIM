@@ -4,7 +4,7 @@
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| HTTP 端口 | `:8080` | 环境变量 `SERVER_PORT` |
+| HTTP 端口 | `:8081` | 环境变量 `SERVER_PORT` |
 | 内嵌 MQTT TCP | `:1883` | 所有网卡，无需外部 Broker |
 | 内嵌 MQTT WebSocket | `:1884` | 所有网卡 |
 | CORS | `*` | 允许任意来源跨域 |
@@ -47,7 +47,7 @@ Content-Type: multipart/form-data
 
 **调用示例**（curl）：
 ```bash
-curl -X POST http://localhost:8080/api/upload -F "files=@航线.kmz"
+curl -X POST http://localhost:8081/api/upload -F "files=@航线.kmz"
 ```
 
 ---

@@ -12,8 +12,14 @@
         <div class="sidebar-header">
           <h2>低空飞行数据生成器</h2>
         </div>
+
+        <div class="tab-bar">
+          <button class="tab" :class="{ active: activeTab === 'routes' }" @click="activeTab = 'routes'">航线</button>
+          <button class="tab" :class="{ active: activeTab === 'docks' }" @click="activeTab = 'docks'">机巢</button>
+        </div>
+
         <!-- 上半部分：上传 + 列表 -->
-        <div class="panel-top">
+        <div class="panel-top" v-show="activeTab === 'routes'">
           <div class="upload-section">
             <h3>航线上传</h3>
             <label class="file-upload-btn">
@@ -38,7 +44,7 @@
           </div>
         </div>
         <!-- 下半部分：无人机详情 -->
-        <div class="panel-bottom">
+        <div class="panel-bottom" v-show="activeTab === 'routes'">
         <div v-if="selectedDrone" class="status-panel">
           <h3>{{ selectedDrone.name }}</h3>
           <div class="status-badge" :class="selectedDrone.status">
@@ -146,6 +152,11 @@
           </div>
         </div>
         </div>
+
+        <!-- 机巢管理 -->
+        <div class="panel-top" v-show="activeTab === 'docks'">
+          <DockPanel />
+        </div>
       </div>
 
       <!-- 右侧悬浮面板：仿真控制 -->
@@ -248,15 +259,17 @@ import { useCesium } from './composables/useCesium'
 import { useTrajectory, type TrajectoryData } from './composables/useTrajectory'
 import { useDebug } from './composables/useDebug'
 import { useMQTT } from './composables/useMQTT'
+import DockPanel from './components/DockPanel.vue'
 import axios from 'axios'
 
 const { viewer, init: initCesium, destroy: destroyCesium, loadShenzhenBuildings, buildingsVisible } = useCesium('cesiumContainer')
 const { addTrajectory, updateDronePosition, clearPreview, removeTrajectory, flyToTrajectory, resetPath, getTakeOffPoint } = useTrajectory(viewer)
 const { isDebug, init: initDebug, startDebugLoop, stopDebugLoop, getDebugWaypoints } = useDebug()
-const { connect: connectMQTT, subscribeRaw, publish: publishMQTT, disconnect: disconnectMQTT } = useMQTT('ws://localhost:1884')
+const { connect: connectMQTT, subscribeRaw, publish: publishMQTT, disconnect: disconnectMQTT, connected: mqttConnected } = useMQTT('ws://localhost:1884')
 
 const collapsed = ref(false)
 const collapsedRight = ref(false)
+const activeTab = ref<'routes' | 'docks'>('routes')
 
 const speed = ref(1)
 const speeds = [
@@ -413,6 +426,8 @@ function statusText(status: string): string {
   return map[status] || status
 }
 
+const globalStateSubscribed = ref(false)
+const discoveringDrones = new Set<string>()
 const droneList: Ref<DroneInfo[]> = ref([])
 const selectedDroneId: Ref<string | null> = ref(null)
 const selectedDrone = ref<DroneInfo | null>(null)
@@ -450,6 +465,127 @@ async function removeDrone(id: string) {
 
   // 从列表中移除
   droneList.value = droneList.value.filter(d => d.id !== id)
+}
+
+// 确保全局 MQTT state 通配订阅已建立（用于自动发现外部下发的航线）
+async function ensureGlobalStateSubscribe() {
+  if (globalStateSubscribed.value) return
+  try {
+    if (!mqttConnected.value) {
+      await connectMQTT()
+    }
+    subscribeRaw('thing/product/+/state', (_topic: string, payload: any) => {
+      const topicParts = _topic.split('/')
+      if (topicParts.length < 3) return
+      const droneId = topicParts[2]
+      const existing = droneList.value.find(d => d.id === droneId)
+      if (existing) {
+        handleStateMessage(droneId, payload)
+        return
+      }
+      // 防止并发重复发现（state 消息可能被双写导致短时间内收到两条）
+      if (discoveringDrones.has(droneId)) return
+      handleNewDroneDiscovered(droneId, payload)
+    })
+    globalStateSubscribed.value = true
+  } catch {
+    // MQTT 未连接时忽略
+  }
+}
+
+// 外部下发的新航线自动加入列表
+async function handleNewDroneDiscovered(droneId: string, payload: any) {
+  discoveringDrones.add(droneId)
+  try {
+    const res = await axios.get(`/api/sim/trajectory/${encodeURIComponent(droneId)}`)
+    if (!res.data.success || !res.data.data) return
+    const tp: TrajectoryData = res.data.data
+
+    // 防止与 restoreDrones 竞态导致重复添加
+    if (droneList.value.find(d => d.id === droneId)) return
+
+    addTrajectory(tp)
+    droneList.value.push({
+      id: tp.id,
+      name: tp.name,
+      lng: tp.waypoints[0]?.lng || 0,
+      lat: tp.waypoints[0]?.lat || 0,
+      alt: tp.waypoints[0]?.ellipsoidHeight || 0,
+      heightAboveTakeoff: 0,
+      speed: 0,
+      verticalSpeed: 0,
+      heading: 0,
+      status: 'idle',
+      waypointIndex: 0,
+      totalWaypoints: tp.waypoints.length,
+      progress: 0,
+      currentAction: '',
+      hoverTimeRemaining: 0,
+      droneModelName: tp.droneModelName || '',
+      payloadModelName: tp.payloadModelName || '',
+      takeOffSecurityHeight: tp.takeOffSecurityHeight || 0,
+      globalTransitionalSpeed: tp.globalTransitionalSpeed || 0,
+      autoFlightSpeed: tp.autoFlightSpeed || 0,
+      totalDistance: tp.totalDistance || 0,
+      finishAction: tp.finishAction || '',
+      flyToWaylineMode: tp.flyToWaylineMode || '',
+      batteryPercent: 0,
+      firmwareVersion: '',
+      obstacleAvoidance: '',
+      windSpeed: 0,
+      windDirection: 0,
+      windWarning: false,
+      maxWindResistance: 12,
+      runGeneration: 0,
+    })
+
+    // 订阅该无人机的 OSD 遥测
+    subscribeRaw(`thing/product/${droneId}/osd`, (_topic: string, osdPayload: any) => {
+      handleOSDMessage(droneId, osdPayload)
+    })
+
+    // 处理首次状态消息
+    handleStateMessage(droneId, payload)
+
+    // 兜底：从 API 拉取当前实时状态，确保 retain 消息不是过期状态
+    try {
+      const statusRes = await axios.get('/api/sim/status')
+      if (statusRes.data.success && Array.isArray(statusRes.data.data)) {
+        const status = statusRes.data.data.find((s: any) => s.id === droneId)
+        if (status) {
+          const drone = droneList.value.find(d => d.id === droneId)
+          if (drone) {
+            drone.status = status.status
+            drone.progress = status.progress
+            drone.lat = status.lat
+            drone.lng = status.lng
+            drone.alt = status.alt
+            drone.speed = status.speed
+            drone.verticalSpeed = status.verticalSpeed || 0
+            drone.heading = status.heading
+            drone.heightAboveTakeoff = status.heightAboveTakeoff || 0
+            drone.waypointIndex = status.waypointIndex || 0
+            drone.totalWaypoints = status.totalWaypoints || tp.waypoints.length
+            drone.currentAction = status.currentAction || ''
+            drone.hoverTimeRemaining = status.hoverTimeRemaining || 0
+            drone.batteryPercent = status.batteryPercent || 0
+            drone.windSpeed = status.windSpeed || 0
+            drone.windDirection = status.windDirection || 0
+            drone.windWarning = status.windWarning || false
+            drone.maxWindResistance = status.maxWindResistance || 12
+            drone.runGeneration = status.runGeneration || 0
+            if (status.lng && status.lat) {
+              updateDronePosition(droneId, status.lng, status.lat, status.alt, status.heading)
+            }
+          }
+        }
+      }
+    } catch { /* ignore */ }
+  } catch (e) {
+    console.warn('自动发现无人机失败:', droneId, e)
+  } finally {
+    discoveringDrones.delete(droneId)
+  }
 }
 
 async function handleFileUpload(e: Event) {
@@ -503,14 +639,14 @@ async function handleFileUpload(e: Event) {
 
       // 通过 MQTT 获取实时遥测 + 设备状态
       try {
-        await connectMQTT()
-        for (const traj of res.data.data) {
-          subscribeRaw(`thing/product/${traj.id}/osd`, (_topic, payload) => {
-            handleOSDMessage(traj.id, payload)
-          })
-          subscribeRaw(`thing/product/${traj.id}/state`, (_topic, payload) => {
-            handleStateMessage(traj.id, payload)
-          })
+      await ensureGlobalStateSubscribe()
+      for (const traj of res.data.data) {
+        subscribeRaw(`thing/product/${traj.id}/osd`, (_topic, payload) => {
+          handleOSDMessage(traj.id, payload)
+        })
+        subscribeRaw(`thing/product/${traj.id}/state`, (_topic, payload) => {
+          handleStateMessage(traj.id, payload)
+        })
         }
       } catch (mqttErr) {
         console.warn('MQTT 连接失败:', mqttErr)
@@ -726,6 +862,13 @@ function emergencyLanding() {
 // 从后端恢复已注册的无人机（页面刷新后恢复状态）
 async function restoreDrones() {
   try {
+    // 无论是否有已注册的航线，先建立 MQTT 并启动全局 state 监听（用于自动发现外部下发的航线）
+    try {
+      await ensureGlobalStateSubscribe()
+    } catch (mqttErr) {
+      console.warn('MQTT 连接失败:', mqttErr)
+    }
+
     const res = await axios.get('/api/sim/trajectories')
     if (!res.data.success || !Array.isArray(res.data.data)) return
     const trajs: TrajectoryData[] = res.data.data
@@ -805,9 +948,8 @@ async function restoreDrones() {
       }
     } catch { /* ignore */ }
 
-    // 连接 MQTT 订阅实时遥测 + 设备状态
+    // 订阅已知机型实时遥测 + 设备状态
     try {
-      await connectMQTT()
       for (const traj of trajs) {
         subscribeRaw(`thing/product/${traj.id}/osd`, (_topic, payload) => {
           handleOSDMessage(traj.id, payload)
